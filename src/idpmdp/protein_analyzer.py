@@ -6,6 +6,7 @@ import freesasa
 from prody import Ensemble
 from scipy.optimize import curve_fit
 import mdtraj as md
+from collections import defaultdict
 
 
 class ProteinAnalyzer:
@@ -32,15 +33,16 @@ class ProteinAnalyzer:
         Calculates the distance between the CA atoms of the
         first and last residues across the trajectory.
         """
+        start_ca = self.u.select_atoms(f"resid {self.residues[0].resid} and name CA")
+        end_ca = self.u.select_atoms(f"resid {self.residues[-1].resid} and name CA")
+        # Ensure single atom selections
+        assert len(start_ca) == 1, "Start residue CA atom not found."
+        assert len(end_ca) == 1, "End residue CA atom not found."
 
         all_distances = []
         for ts in self.u.trajectory:
-            start_ca = self.u.select_atoms(
-                f"resid {self.residues[0].resid} and name CA"
-            )
-            end_ca = self.u.select_atoms(f"resid {self.residues[-1].resid} and name CA")
             resA, resB, dist = distances.dist(start_ca, end_ca)
-            all_distances.append(dist**2)
+            all_distances.append(dist)
 
         return np.array(all_distances)
 
@@ -48,9 +50,7 @@ class ProteinAnalyzer:
         """Calculates the Radius of Gyration (Rg) over time."""
         rg_values = []
         for ts in self.u.trajectory:
-            rg = self.protein_atoms.atoms.radius_of_gyration()
-            rg_values.append(rg)
-
+            rg_values.append(self.protein_atoms.radius_of_gyration())
         return np.array(rg_values)
 
     def compute_mean_squared_end_to_end_distance(self):
@@ -92,57 +92,59 @@ class ProteinAnalyzer:
     # --- GLOBAL TOPOLOGY ---
 
     def compute_gyration_tensor_properties(self):
-        """Computes Eigenvalues, Asphericity (b), and Prolateness (S)."""
         results = {"asphericity": [], "prolateness": [], "eigenvalues": []}
 
+        weights = self.protein_atoms.masses
+        total_mass = self.protein_atoms.total_mass()
+
         for ts in self.u.trajectory:
-            # Get the 3x3 gyration tensor
-            tensor = (
-                self.protein_atoms.moment_of_inertia() / self.protein_atoms.total_mass()
-            )
-            eigvals = np.sort(np.linalg.eigvalsh(tensor))  # lambda1 < lambda2 < lambda3
+            # 1. Manually compute the Gyration Tensor (Mass-weighted)
+            pos = self.protein_atoms.positions - self.protein_atoms.center_of_mass()
+            tensor = np.dot(pos.T, pos * weights[:, np.newaxis]) / total_mass
+
+            eigvals = np.sort(np.linalg.eigvalsh(tensor))
+
             l1, l2, l3 = eigvals
-
-            # Asphericity (b)
+            Rg2 = l1 + l2 + l3
             b = l3 - 0.5 * (l1 + l2)
-
-            # Prolateness (S) - Shape descriptor
-            # Using the standard definition relative to the mean eigenvalue
-            mean_eig = np.mean(eigvals)
-            s = ((l1 - mean_eig) * (l2 - mean_eig) * (l3 - mean_eig)) / (mean_eig**3)
+            c = l2 - l1
+            kappa2 = (b**2 + 0.75 * c**2) / (Rg2**2)  # or use MDTraj form below
 
             results["eigenvalues"].append(eigvals)
             results["asphericity"].append(b)
-            results["prolateness"].append(s)
-
+            results["prolateness"].append(kappa2)
         return results
 
-    def compute_scaling_exponent(self):
-        """Fits internal distances R_ij to |i-j|^nu to find scaling exponent."""
-        # Calculate mean distance between all pairs of C-alpha atoms
+    def compute_scaling_exponent(self, min_sep=5):
+        """Fits ⟨R_ij⟩ ~ |i-j|^nu using C-alpha distances."""
         ca = self.protein_atoms.select_atoms("name CA")
         n_res = len(ca)
-        dist_matrix = np.zeros((n_res, n_res))
 
-        # Average distance matrix over trajectory
+        acc = defaultdict(list)
+
+        # loop over trajectory
         for ts in self.u.trajectory:
-            dist_matrix += distances.distance_array(ca.positions, ca.positions)
-        dist_matrix /= len(self.u.trajectory)
+            coords = ca.positions
+            for i in range(n_res):
+                ri = coords[i]
+                for j in range(i + 1, n_res):
+                    n = j - i
+                    r = np.linalg.norm(coords[j] - ri)
+                    acc[n].append(r)
 
-        # Extract internal distances |i-j| vs R_ij
-        separations = []
-        actual_dists = []
-        for i in range(n_res):
-            for j in range(i + 1, n_res):
-                separations.append(abs(i - j))
-                actual_dists.append(dist_matrix[i, j])
+        # mean R(n)
+        n_list = np.array(sorted(acc.keys()))
+        R_mean = np.array([np.mean(acc[n]) for n in n_list])
 
-        # Power law fit: R = A * N^nu
-        def power_law(n, a, nu):
-            return a * n**nu
+        # log–log fit
+        mask = n_list >= min_sep
+        logn = np.log(n_list[mask])
+        logR = np.log(R_mean[mask])
 
-        popt, _ = curve_fit(power_law, separations, actual_dists, p0=[3.8, 0.5])
-        return popt[1]  # Return nu
+        p = np.polyfit(logn, logR, 1)
+        nu = p[0]
+
+        return nu
 
     # --- BACKBONE GRAMMAR ---
 
@@ -155,13 +157,16 @@ class ProteinAnalyzer:
         # Simple Shannon Entropy for the (phi, psi) distribution
         # In a real scenario, use 'X-Entropy' library for refined integration
         def calculate_entropy(angles):
-            hist, _ = np.histogram(angles, bins=50, density=True)
-            hist = hist[hist > 0]
-            return -np.sum(hist * np.log(hist))
+            hist_counts, bin_edges = np.histogram(angles, bins=50, density=False)
+            p = hist_counts / hist_counts.sum()
+            p = p[p > 0]
+            entropy = -np.sum(p * np.log(p))
+            return entropy
 
         s_conf_phi = [
             calculate_entropy(phi_angles[:, i]) for i in range(phi_angles.shape[1])
         ]
+
         return {"phi": phi_angles, "psi": psi_angles, "entropy_phi": s_conf_phi}
 
     # --- NETWORK DYNAMICS ---
@@ -215,7 +220,7 @@ class ProteinAnalyzer:
         # Vectorized variance calculation for normalization
         # variances shape: (n_atoms,)
         variances = np.mean(np.sum(fluctuations**2, axis=2), axis=0)
-        norm_factor = np.sqrt(variances)
+        norm_factor = np.sqrt(variances) + 1e-12  # Avoid division by zero
 
         for i in range(n_atoms):
             # Calculate dot product across all frames for atom i and all atoms j
@@ -261,12 +266,17 @@ class ProteinAnalyzer:
 
     # --- SOLVENT-SOLUTE ---
 
-    def compute_exact_sasa(self):
-        """Numerical integration of SASA using FreeSASA."""
-        # FreeSASA works best with Bio.PDB or structure files
-        struct = freesasa.Structure(self.pdb_path)
-        result = freesasa.calc(struct)
-        return result.totalArea()
+    def compute_trajectory_sasa_mdtraj(self):
+        """Calculates SASA for every frame using MDTraj (Shrake-Rupley)."""
+        # Load trajectory into mdtraj format
+        t = md.load(self.xtc_path, top=self.pdb_path)
+
+        sasa_per_residue = md.shrake_rupley(
+            t, mode="residue"
+        )  # shape (n_frames, n_residues)
+        total_sasa = sasa_per_residue.sum(axis=1)
+
+        return total_sasa  # Returns np.array of shape (n_frames,)
 
     def compute_hydration_density(self, bins=50):
         """3D Volumetric histogramming of solvent (Water) around protein."""
@@ -280,4 +290,16 @@ class ProteinAnalyzer:
 
         all_positions = np.concatenate(all_positions)
         grid, edges = np.histogramdd(all_positions, bins=bins)
+
+        # Code modified to average over frames
+        n_frames = len(self.u.trajectory)
+        Rmax = 30.0  # Å, typical
+        my_range = [[-Rmax, Rmax], [-Rmax, Rmax], [-Rmax, Rmax]]
+        grid = np.zeros((bins, bins, bins), dtype=int)
+        for ts in self.u.trajectory:
+            relative_pos = solvent.positions - self.protein_atoms.center_of_mass()
+            h, _ = np.histogramdd(relative_pos, bins=bins, range=my_range)
+            grid += h
+        grid = grid / n_frames  # average density per frame
+
         return grid

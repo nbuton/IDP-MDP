@@ -171,9 +171,29 @@ def test_contact_map(analyzer):
 
 
 def test_sasa(analyzer):
-    sasa = analyzer.compute_exact_sasa()
-    assert isinstance(sasa, float)
-    assert sasa > 0
+    # Calling the updated trajectory-based SASA method
+    sasa_values = analyzer.compute_trajectory_sasa_mdtraj()
+
+    # 1. Check if the output is a numpy array
+    assert isinstance(sasa_values, np.ndarray), "SASA output should be a numpy array."
+
+    # 2. Check if the length matches the number of frames in the trajectory
+    expected_frames = len(analyzer.u.trajectory)
+    assert (
+        len(sasa_values) == expected_frames
+    ), f"Expected {expected_frames} frames, got {len(sasa_values)}."
+
+    # 3. Check if all values are physically plausible (positive)
+    assert np.all(sasa_values > 0), "SASA values must be greater than zero."
+
+    # 4. (Optional) Check for reasonable variance
+    # If the protein is moving, SASA shouldn't be identical across all frames
+    if expected_frames > 1:
+        assert (
+            np.std(sasa_values) > 0
+        ), "SASA is static; check if trajectory coordinates are updating."
+
+    print(f"SASA test passed for {expected_frames} frames.")
 
 
 def test_hydration_density(analyzer):
