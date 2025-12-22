@@ -4,7 +4,6 @@ from MDAnalysis.analysis.dssp import DSSP
 import numpy as np
 from prody import Ensemble
 import mdtraj as md
-from collections import defaultdict
 
 
 class ProteinAnalyzer:
@@ -159,21 +158,7 @@ class ProteinAnalyzer:
         t = md.load(self.xtc_path, top=self.pdb_path)
         phi_indices, phi_angles = md.compute_phi(t)
         psi_indices, psi_angles = md.compute_psi(t)
-
-        # Simple Shannon Entropy for the (phi, psi) distribution
-        # In a real scenario, use 'X-Entropy' library for refined integration
-        def calculate_entropy(angles):
-            hist_counts, bin_edges = np.histogram(angles, bins=50, density=False)
-            p = hist_counts / hist_counts.sum()
-            p = p[p > 0]
-            entropy = -np.sum(p * np.log(p))
-            return entropy
-
-        s_conf_phi = [
-            calculate_entropy(phi_angles[:, i]) for i in range(phi_angles.shape[1])
-        ]
-
-        return {"phi": phi_angles, "psi": psi_angles, "entropy_phi": s_conf_phi}
+        return {"phi": phi_angles, "psi": psi_angles}
 
     # --- NETWORK DYNAMICS ---
 
@@ -272,17 +257,27 @@ class ProteinAnalyzer:
 
     # --- SOLVENT-SOLUTE ---
 
-    def compute_trajectory_sasa_mdtraj(self, n_sphere_points, stride):
-        """Calculates SASA for every frame using MDTraj (Shrake-Rupley)."""
-        # Load trajectory into mdtraj format
+    def compute_residue_sasa(self, n_sphere_points, stride):
+        """
+        Returns a 1D numpy array of time-averaged SASA values
+        in the order of the protein sequence.
+        """
+        # 1. Load the trajectory
         t = md.load(self.xtc_path, top=self.pdb_path, stride=stride)
 
-        sasa_per_residue = md.shrake_rupley(
-            t, mode="residue", n_sphere_points=n_sphere_points
-        )  # shape (n_frames, n_residues)
-        total_sasa = sasa_per_residue.sum(axis=1)
+        # 2. Select only the protein (standard practice to avoid membrane/solvent interference)
+        protein_indices = t.topology.select("protein")
+        t_prot = t.atom_slice(protein_indices)
 
-        return total_sasa  # Returns np.array of shape (n_frames,)
+        # 3. Compute SASA per residue
+        # Returns shape (n_frames, n_residues)
+        sasa_per_frame_per_res = md.shrake_rupley(t_prot, mode="residue")
+
+        # 4. Average over time (frames)
+        # Resulting shape: (n_residues,)
+        avg_sasa_array = np.mean(sasa_per_frame_per_res, axis=0)
+
+        return avg_sasa_array
 
     def compute_hydration_density(self, bins=50, Rmax=30.0):
         """
@@ -310,3 +305,158 @@ class ProteinAnalyzer:
         grid /= n_frames
 
         return grid
+
+    def pooled_gyration_properties(self):
+        """
+        Pools the gyration tensor properties into frame-independent descriptors.
+        """
+
+        results_dict = self.compute_gyration_tensor_properties()
+        asphericity = np.array(results_dict["asphericity"])
+        prolateness = np.array(results_dict["prolateness"])
+        eigenvals = np.array(results_dict["eigenvalues"])  # Shape (T, 3)
+
+        pooled = {
+            # Mean values (First Moment)
+            "mean_asphericity": np.mean(asphericity),
+            "mean_prolateness": np.mean(prolateness),
+            "mean_eigenvalues": np.mean(eigenvals, axis=0),
+            # Fluctuations (Second Moment)
+            "std_asphericity": np.std(asphericity),
+            # Distribution (For Histograms)
+            "asphericity_hist": np.histogram(asphericity, bins=30, density=True),
+            "prolateness_hist": np.histogram(prolateness, bins=30, density=True),
+        }
+        return pooled
+
+    def pooled_dihedral_entropy(self, bins=60):
+        """
+        phi_array: shape (n_frames, n_residues)
+        psi_array: shape (n_frames, n_residues)
+        """
+        results = self.compute_dihedral_distribution_and_entropy()
+        phi_array = results["phi"]
+        psi_array = results["psi"]
+
+        n_frames, n_res = phi_array.shape
+        pooled_entropy = {"phi": [], "psi": []}
+
+        for i in range(n_res):
+            # Process PHI for residue i
+            phi_counts, _ = np.histogram(
+                phi_array[:, i], bins=bins, range=[-np.pi, np.pi]
+            )
+            p_phi = phi_counts / n_frames
+            p_phi = p_phi[p_phi > 0]  # Remove zeros to avoid log(0)
+            s_phi = -np.sum(p_phi * np.log(p_phi))
+
+            # Process PSI for residue i
+            psi_counts, _ = np.histogram(
+                psi_array[:, i], bins=bins, range=[-np.pi, np.pi]
+            )
+            p_psi = psi_counts / n_frames
+            p_psi = p_psi[p_psi > 0]
+            s_psi = -np.sum(p_psi * np.log(p_psi))
+
+            pooled_entropy["phi"].append(s_phi)
+            pooled_entropy["psi"].append(s_psi)
+
+        return pooled_entropy
+
+    def hydration_density_on_sequence(self, bins, Rmax, cutoff):
+        """
+        Maps 3D hydration density back to a 1D sequence array.
+        """
+        grid = self.compute_hydration_density(bins=bins, Rmax=Rmax)
+        # 1. Reconstruct the grid coordinate system
+        lin = np.linspace(-Rmax, Rmax, bins)
+        grid_x, grid_y, grid_z = np.meshgrid(lin, lin, lin, indexing="ij")
+        # Create a (N_voxels, 3) array of all grid point coordinates
+        grid_coords = np.vstack([grid_x.ravel(), grid_y.ravel(), grid_z.ravel()]).T
+        grid_flat = grid.ravel()
+
+        n_residues = len(self.protein_atoms.residues)
+        hydration_per_res = np.zeros(n_residues)
+
+        # 2. Get protein COM to match the centering used in your grid calculation
+        protein_com = self.protein_atoms.center_of_mass()
+
+        # 3. For each residue, find which grid points are nearby
+        for i, res in enumerate(self.protein_atoms.residues):
+            # Shift residue positions to protein-centered frame
+            res_pos = res.atoms.positions - protein_com
+
+            # We use a KDTree or simple distance check to find voxels near the residue
+            # For simplicity in this snippet, we'll check distances:
+            # (For large grids, using scipy.spatial.cKDTree is much faster)
+            for atom_pos in res_pos:
+                dist_sq = np.sum((grid_coords - atom_pos) ** 2, axis=1)
+                mask = dist_sq < cutoff**2
+
+                # Sum the density in these voxels
+                hydration_per_res[i] += np.sum(grid_flat[mask])
+
+        # 4. Return normalized sequence array
+        return hydration_per_res
+
+    def compute_all(
+        self,
+        sasa_n_sphere=100,
+        sasa_stride=1,
+        hydration_bins=50,
+        hydration_rmax=30.0,
+        contact_cutoff=8.0,
+        scaling_min_sep=5,
+    ):
+        """
+        Executes all analysis methods and aggregates results into a single dictionary.
+
+        Returns:
+            dict: Comprehensive analysis results.
+        """
+        print("Starting comprehensive protein analysis...")
+
+        results = {}
+
+        # 1. Basic Dimensions
+        print("-> Computing dimensions (Rg, End-to-End)...")
+        results["ms_end_to_end"] = self.compute_mean_squared_end_to_end_distance()
+        results["ms_radius_of_gyration"] = (
+            self.compute_mean_squared_radius_of_gyration()
+        )
+
+        # 2. Global Topology & Scaling
+        print("-> Computing gyration tensor and scaling exponent...")
+        results["pooled_gyration_tensor"] = self.pooled_gyration_properties()
+        results["scaling_exponent"] = self.compute_scaling_exponent(
+            min_sep=scaling_min_sep
+        )
+
+        # 3. Secondary Structure
+        print("-> Computing DSSP propensities...")
+        results["secondary_structure"] = self.compute_secondary_structure_propensities()
+
+        # 4. Backbone Grammar (Entropy/Dihedrals)
+        print("-> Computing dihedral distributions and entropy...")
+        results["pooled_dihedrals_entropy"] = self.pooled_dihedral_entropy()
+
+        # 5. Network Dynamics & Correlations
+        print("-> Computing DCCM and distance fluctuations...")
+        results["dccm"] = self.compute_dccm()
+        results["distance_fluctuations"] = self.compute_distance_fluctuations()
+
+        # 6. Geometric Features
+        print("-> Computing contact map...")
+        results["contact_map"] = self.compute_contact_map(cutoff=contact_cutoff)
+
+        # 7. Solvent-Solute Interactions
+        print("-> Computing SASA and hydration density (this may take a while)...")
+        results["residue_sasa"] = self.compute_residue_sasa(
+            n_sphere_points=sasa_n_sphere, stride=sasa_stride
+        )
+        results["hydration_density"] = self.hydration_density_on_sequence(
+            bins=hydration_bins, Rmax=hydration_rmax, cutoff=contact_cutoff
+        )
+
+        print("Analysis complete.")
+        return results
