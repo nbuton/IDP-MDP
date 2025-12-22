@@ -278,28 +278,29 @@ class ProteinAnalyzer:
 
         return total_sasa  # Returns np.array of shape (n_frames,)
 
-    def compute_hydration_density(self, bins=50):
-        """3D Volumetric histogramming of solvent (Water) around protein."""
-        solvent = self.u.select_atoms("resname SOL or resname WAT")
-        # Centering the protein for consistent grid mapping
-        all_positions = []
+    def compute_hydration_density(self, bins=50, Rmax=30.0):
+        """
+        Compute time-averaged 3D hydration density of solvent around the protein
+        in a protein-centered reference frame.
+        """
+        solvent = self.u.select_atoms("resname SOL or resname WAT or resname HOH")
+
+        n_frames = len(self.u.trajectory)
+
+        # Define fixed spatial domain (protein-centered)
+        my_range = [[-Rmax, Rmax], [-Rmax, Rmax], [-Rmax, Rmax]]
+
+        # Use float array: density is real-valued
+        grid = np.zeros((bins, bins, bins), dtype=float)
+
         for ts in self.u.trajectory:
             protein_com = self.protein_atoms.center_of_mass()
             relative_pos = solvent.positions - protein_com
-            all_positions.append(relative_pos)
 
-        all_positions = np.concatenate(all_positions)
-        grid, edges = np.histogramdd(all_positions, bins=bins)
-
-        # Code modified to average over frames
-        n_frames = len(self.u.trajectory)
-        Rmax = 30.0  # Å, typical
-        my_range = [[-Rmax, Rmax], [-Rmax, Rmax], [-Rmax, Rmax]]
-        grid = np.zeros((bins, bins, bins), dtype=int)
-        for ts in self.u.trajectory:
-            relative_pos = solvent.positions - self.protein_atoms.center_of_mass()
             h, _ = np.histogramdd(relative_pos, bins=bins, range=my_range)
             grid += h
-        grid = grid / n_frames  # average density per frame
+
+        # Time average
+        grid /= n_frames
 
         return grid
