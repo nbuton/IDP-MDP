@@ -171,14 +171,18 @@ def test_contact_map(analyzer):
 
 
 def test_sasa(analyzer):
+    stride = 10
     # Calling the updated trajectory-based SASA method
-    sasa_values = analyzer.compute_trajectory_sasa_mdtraj()
+    sasa_values = analyzer.compute_trajectory_sasa_mdtraj(
+        n_sphere_points=60, stride=stride
+    )
 
     # 1. Check if the output is a numpy array
     assert isinstance(sasa_values, np.ndarray), "SASA output should be a numpy array."
 
     # 2. Check if the length matches the number of frames in the trajectory
-    expected_frames = len(analyzer.u.trajectory)
+    total_frames = len(analyzer.u.trajectory)
+    expected_frames = len(range(0, total_frames, stride))
     assert (
         len(sasa_values) == expected_frames
     ), f"Expected {expected_frames} frames, got {len(sasa_values)}."

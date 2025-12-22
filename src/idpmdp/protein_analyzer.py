@@ -2,9 +2,7 @@ import MDAnalysis
 from MDAnalysis.analysis import distances
 from MDAnalysis.analysis.dssp import DSSP
 import numpy as np
-import freesasa
 from prody import Ensemble
-from scipy.optimize import curve_fit
 import mdtraj as md
 from collections import defaultdict
 
@@ -116,34 +114,42 @@ class ProteinAnalyzer:
         return results
 
     def compute_scaling_exponent(self, min_sep=5):
-        """Fits ⟨R_ij⟩ ~ |i-j|^nu using C-alpha distances."""
+        """Vectorized calculation of the scaling exponent."""
         ca = self.protein_atoms.select_atoms("name CA")
         n_res = len(ca)
+        n_frames = len(self.u.trajectory)
 
-        acc = defaultdict(list)
+        # Pre-allocate an array for the sum of distance matrices
+        # self_distance_array returns the upper triangle as a 1D vector
+        dist_vec_sum = np.zeros(int(n_res * (n_res - 1) / 2))
 
-        # loop over trajectory
+        # 1. Optimized trajectory loop (C-level distance calculation)
         for ts in self.u.trajectory:
-            coords = ca.positions
-            for i in range(n_res):
-                ri = coords[i]
-                for j in range(i + 1, n_res):
-                    n = j - i
-                    r = np.linalg.norm(coords[j] - ri)
-                    acc[n].append(r)
+            dist_vec_sum += distances.self_distance_array(ca.positions)
 
-        # mean R(n)
-        n_list = np.array(sorted(acc.keys()))
-        R_mean = np.array([np.mean(acc[n]) for n in n_list])
+        # Mean distance vector across trajectory
+        dist_vec_avg = dist_vec_sum / n_frames
 
-        # log–log fit
-        mask = n_list >= min_sep
-        logn = np.log(n_list[mask])
-        logR = np.log(R_mean[mask])
+        # 2. Map the 1D distance vector to separations |i-j|
+        # Instead of loops, we use the indices of the upper triangle
+        iu = np.triu_indices(n_res, k=1)
+        separations = iu[1] - iu[0]  # This gives us |i-j| for every entry in dist_vec
 
-        p = np.polyfit(logn, logR, 1)
-        nu = p[0]
+        # 3. Vectorized mean per separation
+        n_list = np.arange(min_sep, n_res)
+        r_mean = []
 
+        for n in n_list:
+            # Mask the distance vector where separation is exactly n
+            r_mean.append(np.mean(dist_vec_avg[separations == n]))
+
+        r_mean = np.array(r_mean)
+
+        # 4. Log-Log fit
+        logn = np.log(n_list)
+        logR = np.log(r_mean)
+
+        nu, _ = np.polyfit(logn, logR, 1)
         return nu
 
     # --- BACKBONE GRAMMAR ---
@@ -266,13 +272,13 @@ class ProteinAnalyzer:
 
     # --- SOLVENT-SOLUTE ---
 
-    def compute_trajectory_sasa_mdtraj(self):
+    def compute_trajectory_sasa_mdtraj(self, n_sphere_points, stride):
         """Calculates SASA for every frame using MDTraj (Shrake-Rupley)."""
         # Load trajectory into mdtraj format
-        t = md.load(self.xtc_path, top=self.pdb_path)
+        t = md.load(self.xtc_path, top=self.pdb_path, stride=stride)
 
         sasa_per_residue = md.shrake_rupley(
-            t, mode="residue"
+            t, mode="residue", n_sphere_points=n_sphere_points
         )  # shape (n_frames, n_residues)
         total_sasa = sasa_per_residue.sum(axis=1)
 
