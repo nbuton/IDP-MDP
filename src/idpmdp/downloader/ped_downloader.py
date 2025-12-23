@@ -27,6 +27,7 @@ class PEDDownloader:
 
     def list_ped_entry_ids(
         self,
+        term,
         page_size: int = 100,
         max_nb_ids: Optional[int] = None,
         request_timeout: float = 20.0,
@@ -66,7 +67,7 @@ class PEDDownloader:
                 ids = ids[:max_nb_ids]
                 break
 
-            params = {"offset": offset, "limit": page_size}
+            params = {"offset": offset, "limit": page_size, "term": term}
 
             # Basic retry logic for the page request
             for attempt in range(1, retries + 1):
@@ -91,6 +92,7 @@ class PEDDownloader:
                 raise PEDAPIError("Unreachable retry loop exit")
 
             results = data.get("result", [])
+
             if not results:  # End of the results
                 break
 
@@ -171,8 +173,9 @@ class PEDDownloader:
             except requests.exceptions.RequestException as e:
                 print(f"Error downloading {asset}: {e}")
 
-    def download_all(
+    def download_all_experimental(
         self,
+        experimental_terms=["SAXS", "NMR", "FRET", "SANS", "BMRB", "SASBDB"],
         output_root: str = "data/PED",
         page_size: int = 100,
         max_nb_ids: Optional[int] = None,
@@ -188,12 +191,20 @@ class PEDDownloader:
         """
         os.makedirs(output_root, exist_ok=True)
 
-        ped_ids = self.list_ped_entry_ids(page_size=page_size, max_nb_ids=max_nb_ids)
-        if not ped_ids:
+        unique_ped_ids = set()
+
+        for term in experimental_terms:
+            unique_ped_ids.update(
+                self.list_ped_entry_ids(
+                    page_size=page_size, max_nb_ids=max_nb_ids, term=term
+                )
+            )
+
+        if not unique_ped_ids:
             print("No PED entry IDs found.")
             return
 
-        ped_to_ensembles = self.get_ensemble_ids_map(ped_ids)
+        ped_to_ensembles = self.get_ensemble_ids_map(unique_ped_ids)
 
         logging.info("Downloading all PED assets")
         for ped_id, ensemble_ids in tqdm(ped_to_ensembles.items()):
