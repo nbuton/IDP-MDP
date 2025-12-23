@@ -1,6 +1,7 @@
 from idpmdp.protein_analyzer import ProteinAnalyzer
 import numpy as np
 import time
+import logging
 
 
 def print_results(data, indent=0):
@@ -34,6 +35,26 @@ def print_results(data, indent=0):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+    # Test PED loading
+    print("Analysing ensemble from PED")
+    pdb_path = [
+        "data/PED/PED00001_ensembles/PED00001e001.pdb",
+        # "data/PED/PED00001_ensembles/PED00001e002.pdb",
+        # "data/PED/PED00001_ensembles/PED00001e003.pdb",
+    ]
+    analyzer = ProteinAnalyzer(pdb_path)
+    results = analyzer.compute_all(
+        sasa_n_sphere=250,
+        sasa_stride=10,
+        hydration_bins=50,
+        hydration_rmax=30.0,
+        contact_cutoff=8.0,
+        scaling_min_sep=5,
+    )
+    print_results(results)
+
+    print("Analysing ensemble from ATLAS")
     start_time = time.time()
     pdb_path = "data/ATLAS/1k5n_A_analysis/1k5n_A.pdb"
     xtc_path = "data/ATLAS/1k5n_A_analysis/1k5n_A_R2.xtc"
@@ -49,3 +70,17 @@ if __name__ == "__main__":
     )
     print_results(results)
     print(f"\nTotal analysis time: {time.time() - start_time:.2f} seconds")
+
+    # Test DynaRepo loading
+    print("Analysing ensemble from DynaRepo")
+    pdb_path = "data/DynaRepo/DynaRepo_AG/1DEE_H.pdb"
+    analyzer = ProteinAnalyzer(pdb_path)
+    results = analyzer.compute_all(
+        sasa_n_sphere=250,
+        sasa_stride=10,
+        hydration_bins=50,
+        hydration_rmax=30.0,
+        contact_cutoff=8.0,
+        scaling_min_sep=5,
+    )
+    print_results(results)

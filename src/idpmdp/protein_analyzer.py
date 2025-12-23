@@ -4,14 +4,27 @@ from MDAnalysis.analysis.dssp import DSSP
 import numpy as np
 from prody import Ensemble
 import mdtraj as md
+import logging
 
 
 class ProteinAnalyzer:
-    def __init__(self, pdb_path, xtc_path):
+    def __init__(self, pdb_path, xtc_path=None):
         """Initializes the Universe and checks the system size."""
         self.pdb_path = pdb_path
         self.xtc_path = xtc_path
-        self.u = MDAnalysis.Universe(pdb_path, xtc_path)
+        if isinstance(pdb_path, list):
+            # Use the first PDB as the topology (structure definition)
+            # Use the full list as the trajectory (the frames)
+            topology = pdb_path[0]
+            trajectory = pdb_path
+        else:
+            topology = pdb_path
+            trajectory = xtc_path  # This can be None, a string, or a list
+
+        if trajectory is None:
+            self.u = MDAnalysis.Universe(topology)
+        else:
+            self.u = MDAnalysis.Universe(topology, trajectory)
         # Verify that the universe contains only one segment
         assert (
             len(self.u.segments) == 1
@@ -47,7 +60,8 @@ class ProteinAnalyzer:
         """Calculates the Radius of Gyration (Rg) over time."""
         rg_values = []
         for ts in self.u.trajectory:
-            rg_values.append(self.protein_atoms.radius_of_gyration())
+            radius_of_gyration = self.protein_atoms.radius_of_gyration()
+            rg_values.append(radius_of_gyration)
         return np.array(rg_values)
 
     def compute_mean_squared_end_to_end_distance(self):
@@ -155,7 +169,10 @@ class ProteinAnalyzer:
 
     def compute_dihedral_distribution_and_entropy(self):
         """Uses MDTraj to compute Dihedrals and X-Entropy for S_conf."""
-        t = md.load(self.xtc_path, top=self.pdb_path)
+        if self.xtc_path is None:
+            t = md.load(self.pdb_path)
+        else:
+            t = md.load(self.xtc_path, top=self.pdb_path)
         phi_indices, phi_angles = md.compute_phi(t)
         psi_indices, psi_angles = md.compute_psi(t)
         return {"phi": phi_angles, "psi": psi_angles}
@@ -263,7 +280,10 @@ class ProteinAnalyzer:
         in the order of the protein sequence.
         """
         # 1. Load the trajectory
-        t = md.load(self.xtc_path, top=self.pdb_path, stride=stride)
+        if self.xtc_path is None:
+            t = md.load(self.pdb_path, stride=stride)
+        else:
+            t = md.load(self.xtc_path, top=self.pdb_path, stride=stride)
 
         # 2. Select only the protein (standard practice to avoid membrane/solvent interference)
         protein_indices = t.topology.select("protein")
@@ -420,6 +440,7 @@ class ProteinAnalyzer:
 
         # 1. Basic Dimensions
         print("-> Computing dimensions (Rg, End-to-End)...")
+
         results["ms_end_to_end"] = self.compute_mean_squared_end_to_end_distance()
         results["ms_radius_of_gyration"] = (
             self.compute_mean_squared_radius_of_gyration()

@@ -3,3 +3,4 @@ data/*
 __pycache__/*
 env_IDP-MDP/*
 .DS_Store
+.vscode/*
