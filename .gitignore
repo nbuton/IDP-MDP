@@ -2,5 +2,6 @@ data/*
 *.pyc
 __pycache__/*
 env_IDP-MDP/*
+env_cg2all/*
 .DS_Store
 .vscode/*

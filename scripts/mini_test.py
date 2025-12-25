@@ -3,6 +3,34 @@ import numpy as np
 import time
 import logging
 
+import numpy as np
+
+
+def count_total_floats(data):
+    """
+    Recursively counts the total number of elements in np.arrays
+    within a nested structure of dicts and lists.
+    """
+    total_count = 0
+
+    # Case 1: The item is a dictionary, iterate through its values
+    if isinstance(data, dict):
+        for value in data.values():
+            total_count += count_total_floats(value)
+
+    # Case 2: The item is a list or tuple, iterate through elements
+    elif isinstance(data, (list, tuple)):
+        for item in data:
+            total_count += count_total_floats(item)
+
+    # Case 3: The item is a NumPy array
+    elif isinstance(data, np.ndarray):
+        # We only count if the array contains float types
+        if np.issubdtype(data.dtype, np.floating):
+            total_count += data.size
+
+    return total_count
+
 
 def print_results(data, indent=0):
     """
@@ -35,13 +63,31 @@ def print_results(data, indent=0):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
+    # Test IDRome
+    print("Analysing ensemble from IDRome")
+    start_time = time.time()
+    pdb_path = "data/IDRome/IDRome_v4/A0/A0/24/RBG1/145_181/top_AA.pdb"
+    xtc_path = "data/IDRome/IDRome_v4/A0/A0/24/RBG1/145_181/traj_AA.dcd"
+    analyzer = ProteinAnalyzer(pdb_path, xtc_path)
+    results = analyzer.compute_all(
+        sasa_n_sphere=250,
+        sasa_stride=10,
+        hydration_bins=50,
+        hydration_rmax=30.0,
+        contact_cutoff=8.0,
+        scaling_min_sep=5,
+    )
+    print_results(results)
+    print(f"\nTotal analysis time: {time.time() - start_time:.2f} seconds")
+    exit(1)
+
     # Test PED loading
     print("Analysing ensemble from PED")
     pdb_path = [
-        "data/PED/PED00001_ensembles/PED00001e001.pdb",
-        # "data/PED/PED00001_ensembles/PED00001e002.pdb",
-        # "data/PED/PED00001_ensembles/PED00001e003.pdb",
+        "data/PED/PED00001/e001_ensemble-pdb.pdb",
+        "data/PED/PED00001/e002_ensemble-pdb.pdb",
+        "data/PED/PED00001/e003_ensemble-pdb.pdb",
     ]
     analyzer = ProteinAnalyzer(pdb_path)
     results = analyzer.compute_all(
@@ -53,6 +99,7 @@ if __name__ == "__main__":
         scaling_min_sep=5,
     )
     print_results(results)
+    print("There are {count_total_floats(results)} elements in the results dictionary.")
 
     print("Analysing ensemble from ATLAS")
     start_time = time.time()

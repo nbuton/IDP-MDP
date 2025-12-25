@@ -31,6 +31,8 @@ class ProteinAnalyzer:
         ), "The provided PDB file contains multiple segments."
 
         # Identify the protein and its size
+        all_atom_backbone = self.u.select_atoms("name N CA C O")
+        self.is_coarse_grained = len(all_atom_backbone) < (len(self.u.residues) * 4)
         self.protein_atoms = self.u.select_atoms("protein")
         self.residues = self.protein_atoms.residues
         self.protein_size = len(self.residues)
@@ -81,7 +83,11 @@ class ProteinAnalyzer:
         """
         # 1. Run the DSSP analysis
         # selection=self.u.select_atoms("protein") is recommended if you have ligands/solvent
-        dssp_ana = DSSP(self.u).run()
+        if self.is_coarse_grained:
+            backbone = self.u.select_atoms("name N or name CA or name C or name O")
+            dssp_ana = DSSP(backbone).run(guess_hydrogens=True)
+        else:
+            dssp_ana = DSSP(self.u).run()
 
         # 2. Use the one-hot encoded array (n_frames, n_residues, 3)
         # Index 0: Coil '-', Index 1: Helix 'H', Index 2: Sheet 'E'
