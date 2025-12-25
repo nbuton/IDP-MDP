@@ -29,7 +29,7 @@ for model_type in [
         cg2all.lib.libmodel.download_ckpt_file(model_type, ckpt_fn)
 
 
-def create_backmap_file_idrome(idp_folder, is_idp=True):
+def create_backmap_file_idrome(idp_folder, is_idp=True, device="cpu"):
     """
     Corrected backmapping following the CALVADOS/IDRome protocol.
     Converts .xtc to .dcd temporarily to ensure compatibility with cg2all CLI.
@@ -72,6 +72,8 @@ def create_backmap_file_idrome(idp_folder, is_idp=True):
         out_pdb,
         "--cg",
         cg_model,
+        "--device",
+        device,
     ]
     subprocess.run(cmd, check=True)
 
@@ -114,5 +116,5 @@ def create_backmap_file_idrome(idp_folder, is_idp=True):
 # Usage
 if __name__ == "__main__":
     create_backmap_file_idrome(
-        "data/IDRome/IDRome_v4/A0/A0/24/RBG1/145_181", is_idp=True
+        "data/IDRome/IDRome_v4/A0/A0/24/RBG1/145_181", is_idp=True, device="cpu"
     )
