@@ -2,14 +2,15 @@ import os
 from cg2all import convert_cg2all
 import cg2all.lib.libmodel
 from cg2all.lib.libconfig import MODEL_HOME
-
+import time
 import os
 import subprocess
 import mdtraj as md
 import numpy as np
 from openmm.app import PDBFile, ForceField, Simulation, PME, HBonds
 from openmm import LangevinMiddleIntegrator, OpenMMException, Platform
-
+from pathlib import Path
+from tqdm import tqdm
 
 # Download the model weights for cg2all
 for model_type in [
@@ -29,14 +30,16 @@ for model_type in [
         cg2all.lib.libmodel.download_ckpt_file(model_type, ckpt_fn)
 
 
-def create_backmap_file_idrome(idp_folder, is_idp=True, device="cpu"):
+def create_backmap_file_idrome(
+    idp_folder, is_idp=True, device="cuda", batch_cg2all=16, nb_proc_cg2all=4
+):
     """
     Corrected backmapping following the CALVADOS/IDRome protocol.
     Converts .xtc to .dcd temporarily to ensure compatibility with cg2all CLI.
     """
     # 1. Define Standard IDRome Paths
-    # IDRome typically uses 'top_CA.pdb' for the coarse-grained topology
-    cg_pdb = os.path.join(idp_folder, "top_CA.pdb")
+    # IDRome typically uses 'top.pdb' for the coarse-grained topology
+    cg_pdb = os.path.join(idp_folder, "top.pdb")
     cg_xtc = os.path.join(idp_folder, "traj.xtc")
 
     # Internal temporary file (cg2all works best with .dcd trajectories)
@@ -74,24 +77,33 @@ def create_backmap_file_idrome(idp_folder, is_idp=True, device="cpu"):
         cg_model,
         "--device",
         device,
+        "--batch",
+        str(batch_cg2all),
+        "--proc",
+        str(nb_proc_cg2all),
     ]
+    print("I will run the command:", " ".join(cmd))
     subprocess.run(cmd, check=True)
 
     # 5. Energy Minimization
     # This step is vital to fix clashing atoms created during backmapping
     print("--- Minimizing All-Atom Structure ---")
-    pdb_em = PDBFile(out_pdb)
+    start_time_loading = time.time()
     forcefield = ForceField("amber14-all.xml", "amber14/tip3pfb.xml")
+    print("Time loading forcefield:", time.time() - start_time_loading, "s")
+    pdb_em = PDBFile(out_pdb)
+
     system = forcefield.createSystem(
         pdb_em.topology, nonbondedMethod=PME, nonbondedCutoff=1.0, constraints=HBonds
     )
     integrator = LangevinMiddleIntegrator(300, 1, 0.004)
 
-    try:
+    print("Force field loading time:", time.time() - start_time_loading, "s")
+    if device == "cuda":
         sim = Simulation(
-            pdb_em.topology, system, integrator, Platform.getPlatformByName("CUDA")
+            pdb_em.topology, system, integrator, Platform.getPlatformByName("OpenCL")
         )
-    except:
+    else:
         sim = Simulation(
             pdb_em.topology, system, integrator, Platform.getPlatformByName("CPU")
         )
@@ -113,8 +125,29 @@ def create_backmap_file_idrome(idp_folder, is_idp=True, device="cpu"):
     print(f"Conversion complete. Final All-Atom PDB: {out_pdb}")
 
 
+def get_pdb_directories(root_path):
+    """
+    Returns a set of unique Path objects representing directories
+    that contain at least one .pdb file.
+    """
+    root = Path(root_path)
+    pdb_dirs = {p.parent for p in root.rglob("*.pdb") if p.is_file()}
+    return pdb_dirs
+
+
 # Usage
 if __name__ == "__main__":
-    create_backmap_file_idrome(
-        "data/IDRome/IDRome_v4/A0/A0/24/RBG1/145_181", is_idp=True, device="cpu"
-    )
+    device = "cuda"
+    print("Device:", device)
+    root_path = "data/IDRome/IDRome_v4/A0"
+    all_folder = get_pdb_directories(root_path)
+    for folder in tqdm(all_folder):
+        start_time = time.time()
+        create_backmap_file_idrome(
+            folder,
+            is_idp=True,
+            device=device,
+            batch_cg2all=16,
+            nb_proc_cg2all=4,
+        )
+        print("Elapsed time:", time.time() - start_time, "s")
