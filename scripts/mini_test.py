@@ -2,7 +2,7 @@ from idpmdp.protein_analyzer import ProteinAnalyzer
 import numpy as np
 import time
 import logging
-
+from pathlib import Path
 import numpy as np
 
 
@@ -67,14 +67,12 @@ if __name__ == "__main__":
     # Test IDRome
     print("Analysing ensemble from IDRome")
     start_time = time.time()
-    pdb_path = "data/IDRome/IDRome_v4/A0/A0/24/RBG1/145_181/top_AA.pdb"
-    xtc_path = "data/IDRome/IDRome_v4/A0/A0/24/RBG1/145_181/traj_AA.dcd"
+    pdb_path = Path("data/IDRome/IDRome_v4/Q5/SY/C1/270_327/top_AA.pdb")
+    xtc_path = Path("data/IDRome/IDRome_v4/Q5/SY/C1/270_327/traj_AA.xtc")
     analyzer = ProteinAnalyzer(pdb_path, xtc_path)
     results = analyzer.compute_all(
-        sasa_n_sphere=250,
-        sasa_stride=10,
-        hydration_bins=50,
-        hydration_rmax=30.0,
+        sasa_n_sphere=430,
+        sasa_stride=1,
         contact_cutoff=8.0,
         scaling_min_sep=5,
     )
@@ -100,34 +98,3 @@ if __name__ == "__main__":
     )
     print_results(results)
     print("There are {count_total_floats(results)} elements in the results dictionary.")
-
-    print("Analysing ensemble from ATLAS")
-    start_time = time.time()
-    pdb_path = "data/ATLAS/1k5n_A_analysis/1k5n_A.pdb"
-    xtc_path = "data/ATLAS/1k5n_A_analysis/1k5n_A_R2.xtc"
-
-    analyzer = ProteinAnalyzer(pdb_path, xtc_path)
-    results = analyzer.compute_all(
-        sasa_n_sphere=250,
-        sasa_stride=10,
-        hydration_bins=50,
-        hydration_rmax=30.0,
-        contact_cutoff=8.0,
-        scaling_min_sep=5,
-    )
-    print_results(results)
-    print(f"\nTotal analysis time: {time.time() - start_time:.2f} seconds")
-
-    # Test DynaRepo loading
-    print("Analysing ensemble from DynaRepo")
-    pdb_path = "data/DynaRepo/DynaRepo_AG/1DEE_H.pdb"
-    analyzer = ProteinAnalyzer(pdb_path)
-    results = analyzer.compute_all(
-        sasa_n_sphere=250,
-        sasa_stride=10,
-        hydration_bins=50,
-        hydration_rmax=30.0,
-        contact_cutoff=8.0,
-        scaling_min_sep=5,
-    )
-    print_results(results)

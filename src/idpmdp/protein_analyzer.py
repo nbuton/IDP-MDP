@@ -5,13 +5,19 @@ import numpy as np
 from prody import Ensemble
 import mdtraj as md
 import logging
+from idpmdp.utils import get_ensemble_summary
+from scipy.stats import linregress
 
 
 class ProteinAnalyzer:
     def __init__(self, pdb_path, xtc_path=None):
         """Initializes the Universe and checks the system size."""
+        assert pdb_path.exists(), f"Expected file {pdb_path} to exist, but it does not."
+        assert xtc_path.exists(), f"Expected file {xtc_path} to exist, but it does not."
+
         self.pdb_path = pdb_path
         self.xtc_path = xtc_path
+
         if isinstance(pdb_path, list):
             # Use the first PDB as the topology (structure definition)
             # Use the full list as the trajectory (the frames)
@@ -31,8 +37,8 @@ class ProteinAnalyzer:
         ), "The provided PDB file contains multiple segments."
 
         # Identify the protein and its size
-        all_atom_backbone = self.u.select_atoms("name N CA C O")
-        self.is_coarse_grained = len(all_atom_backbone) < (len(self.u.residues) * 4)
+        heavy_atoms = self.u.select_atoms("not element H")
+        self.is_coarse_grained = len(heavy_atoms) < (len(self.u.residues) * 4)
         self.protein_atoms = self.u.select_atoms("protein")
         self.residues = self.protein_atoms.residues
         self.protein_size = len(self.residues)
@@ -48,8 +54,12 @@ class ProteinAnalyzer:
         start_ca = self.u.select_atoms(f"resid {self.residues[0].resid} and name CA")
         end_ca = self.u.select_atoms(f"resid {self.residues[-1].resid} and name CA")
         # Ensure single atom selections
-        assert len(start_ca) == 1, "Start residue CA atom not found."
-        assert len(end_ca) == 1, "End residue CA atom not found."
+        assert (
+            len(start_ca) == 1
+        ), f"Start residue CA atom not found. Available atoms names: {self.residues[0].atoms.names}"
+        assert (
+            len(end_ca) == 1
+        ), f"End residue CA atom not found.Available atoms names: {self.residues[0].atoms.names}"
 
         all_distances = []
         for ts in self.u.trajectory:
@@ -57,14 +67,6 @@ class ProteinAnalyzer:
             all_distances.append(dist)
 
         return np.array(all_distances)
-
-    def compute_radius_of_gyration(self):
-        """Calculates the Radius of Gyration (Rg) over time."""
-        rg_values = []
-        for ts in self.u.trajectory:
-            radius_of_gyration = self.protein_atoms.radius_of_gyration()
-            rg_values.append(radius_of_gyration)
-        return np.array(rg_values)
 
     def compute_mean_squared_end_to_end_distance(self):
         """Computes the Mean Squared End-to-End Distance (MSED) over the trajectory."""
@@ -97,8 +99,15 @@ class ProteinAnalyzer:
         # Resulting shape: (n_residues, 3)
         propensities = np.mean(data, axis=0)
 
+        resids = np.array([res.resid for res in self.residues])
+        assert np.all(
+            np.diff(resids) > 0
+        ), "Residues are not in order or contain duplicates!"
+        assert np.all(
+            np.diff(resids) == 1
+        ), f"Gap detected in residue sequence: {resids}"
+
         dict_propensities = {
-            "residue": [res.resid for res in self.residues],
             "coil_propensity": propensities[:, 0],
             "helix_propensity": propensities[:, 1],
             "sheet_propensity": propensities[:, 2],
@@ -109,7 +118,19 @@ class ProteinAnalyzer:
     # --- GLOBAL TOPOLOGY ---
 
     def compute_gyration_tensor_properties(self):
-        results = {"asphericity": [], "prolateness": [], "eigenvalues": []}
+        results = {
+            "gyration_eigenvalues_l1": [],
+            "gyration_eigenvalues_l2": [],
+            "gyration_eigenvalues_l3": [],
+            "gyration_l1/l2": [],
+            "gyration_l1/l3": [],
+            "gyration_l2/l3": [],
+            "radius_of_gyration": [],
+            "relative_asphericity": [],
+            "relative_acylindricity": [],
+            "relative_anisotropy": [],
+            "prolateness": [],
+        }
 
         weights = self.protein_atoms.masses
         total_mass = self.protein_atoms.total_mass()
@@ -118,58 +139,72 @@ class ProteinAnalyzer:
             # 1. Manually compute the Gyration Tensor (Mass-weighted)
             pos = self.protein_atoms.positions - self.protein_atoms.center_of_mass()
             tensor = np.dot(pos.T, pos * weights[:, np.newaxis]) / total_mass
-
             eigvals = np.sort(np.linalg.eigvalsh(tensor))
 
             l1, l2, l3 = eigvals
-            Rg2 = l1 + l2 + l3
-            b = l3 - 0.5 * (l1 + l2)
-            c = l2 - l1
-            kappa2 = (b**2 + 0.75 * c**2) / (Rg2**2)  # or use MDTraj form below
+            rg2 = l1 + l2 + l3
+            rg = np.sqrt(rg2)
+            mean_l = rg2 / 3.0
 
-            results["eigenvalues"].append(eigvals)
-            results["asphericity"].append(b)
-            results["prolateness"].append(kappa2)
+            rel_asphericity = (l3 - 0.5 * (l1 + l2)) / rg2
+            rel_acylindricity = (l2 - l1) / rg2
+            rel_shape_anisotropy = (
+                (l3 - l2) ** 2 + (l3 - l1) ** 2 + (l2 - l1) ** 2
+            ) / (2 * (rg2**2))
+            prolateness = ((l1 - mean_l) * (l2 - mean_l) * (l3 - mean_l)) / (mean_l**3)
+
+            results["gyration_eigenvalues_l1"].append(l1)
+            results["gyration_eigenvalues_l2"].append(l2)
+            results["gyration_eigenvalues_l3"].append(l3)
+
+            results["gyration_l1/l2"].append(l1 / l2 if l2 > 0 else 0)
+            results["gyration_l1/l3"].append(l1 / l3 if l3 > 0 else 0)
+            results["gyration_l2/l3"].append(l2 / l3 if l3 > 0 else 0)
+
+            results["radius_of_gyration"].append(rg)
+            results["relative_asphericity"].append(rel_asphericity)
+            results["relative_acylindricity"].append(rel_acylindricity)
+            results["relative_anisotropy"].append(rel_shape_anisotropy)
+            results["prolateness"].append(prolateness)
         return results
 
     def compute_scaling_exponent(self, min_sep=5):
-        """Vectorized calculation of the scaling exponent."""
+        """Vectorized calculation of the scaling exponent with improved statistics."""
         ca = self.protein_atoms.select_atoms("name CA")
         n_res = len(ca)
         n_frames = len(self.u.trajectory)
 
-        # Pre-allocate an array for the sum of distance matrices
-        # self_distance_array returns the upper triangle as a 1D vector
+        # Pre-allocate sum of upper-triangle distance matrices
         dist_vec_sum = np.zeros(int(n_res * (n_res - 1) / 2))
 
-        # 1. Optimized trajectory loop (C-level distance calculation)
+        # 1. Optimized trajectory loop
         for ts in self.u.trajectory:
             dist_vec_sum += distances.self_distance_array(ca.positions)
 
-        # Mean distance vector across trajectory
+        # Mean distance vector
         dist_vec_avg = dist_vec_sum / n_frames
 
-        # 2. Map the 1D distance vector to separations |i-j|
-        # Instead of loops, we use the indices of the upper triangle
+        # 2. Map 1D distances to separations |i-j|
         iu = np.triu_indices(n_res, k=1)
-        separations = iu[1] - iu[0]  # This gives us |i-j| for every entry in dist_vec
+        separations = iu[1] - iu[0]
 
-        # 3. Vectorized mean per separation
+        # 3. Fully vectorized mean distances per separation using bincount
         n_list = np.arange(min_sep, n_res)
-        r_mean = []
+        counts = np.bincount(separations, minlength=n_res)
+        r_sum = np.bincount(separations, weights=dist_vec_avg, minlength=n_res)
+        r_mean = r_sum[counts > 0] / counts[counts > 0]
+        r_mean = r_mean[: len(n_list)]  # Truncate to n_list range
 
-        for n in n_list:
-            # Mask the distance vector where separation is exactly n
-            r_mean.append(np.mean(dist_vec_avg[separations == n]))
+        # 4. Robust log-log linear regression (replaces polyfit)
+        mask = np.isfinite(np.log(r_mean)) & (r_mean > 0)
+        logn = np.log(n_list[mask])
+        logR = np.log(r_mean[mask])
 
-        r_mean = np.array(r_mean)
+        result = linregress(logn, logR)
+        nu = result.slope
+        r_squared = result.rvalue**2
 
-        # 4. Log-Log fit
-        logn = np.log(n_list)
-        logR = np.log(r_mean)
-
-        nu, _ = np.polyfit(logn, logR, 1)
-        return nu
+        return nu  # , r_squared, n_list[mask], r_mean[mask]
 
     # --- BACKBONE GRAMMAR ---
 
@@ -181,7 +216,23 @@ class ProteinAnalyzer:
             t = md.load(self.xtc_path, top=self.pdb_path)
         phi_indices, phi_angles = md.compute_phi(t)
         psi_indices, psi_angles = md.compute_psi(t)
-        return {"phi": phi_angles, "psi": psi_angles}
+
+        n_frames = t.n_frames
+        n_residues = t.topology.n_residues  # Total length L
+
+        # 2. Initialize full-sized arrays filled with NaNs
+        # Shape: (n_frames, n_residues)
+        full_phi = np.full((n_frames, n_residues), np.nan)
+        full_psi = np.full((n_frames, n_residues), np.nan)
+
+        # 3. Place the computed angles into the correct positions
+        # Phi starts at residue 1 (skips 0)
+        full_phi[:, 1:] = phi_angles
+
+        # Psi ends at residue L-2 (skips L-1)
+        full_psi[:, :-1] = psi_angles
+
+        return {"phi": full_phi, "psi": full_psi}
 
     # --- NETWORK DYNAMICS ---
 
@@ -285,75 +336,68 @@ class ProteinAnalyzer:
         Returns a 1D numpy array of time-averaged SASA values
         in the order of the protein sequence.
         """
-        # 1. Load the trajectory
+        # MaxASA values in nm^2 (Tien et al. 2013)
+        TIEN_MAX_SASA = {
+            "ALA": 1.21,
+            "ARG": 2.48,
+            "ASN": 1.87,
+            "ASP": 1.87,
+            "CYS": 1.48,
+            "GLN": 2.14,
+            "GLU": 2.14,
+            "GLY": 0.97,
+            "HIS": 2.16,
+            "ILE": 1.95,
+            "LEU": 1.91,
+            "LYS": 2.30,
+            "MET": 2.03,
+            "PHE": 2.28,
+            "PRO": 1.54,
+            "SER": 1.43,
+            "THR": 1.63,
+            "TRP": 2.64,
+            "TYR": 2.55,
+            "VAL": 1.65,
+        }
+
+        # Load the trajectory
         if self.xtc_path is None:
             t = md.load(self.pdb_path, stride=stride)
         else:
             t = md.load(self.xtc_path, top=self.pdb_path, stride=stride)
 
-        # 2. Select only the protein (standard practice to avoid membrane/solvent interference)
+        # Select only the protein (standard practice to avoid membrane/solvent interference)
         protein_indices = t.topology.select("protein")
         t_prot = t.atom_slice(protein_indices)
 
-        # 3. Compute SASA per residue
+        # Compute SASA per residue
         # Returns shape (n_frames, n_residues)
-        sasa_per_frame_per_res = md.shrake_rupley(t_prot, mode="residue")
+        sasa_per_frame_per_res = md.shrake_rupley(
+            t_prot, n_sphere_points=n_sphere_points, mode="residue"
+        )
+        # Calculate Mean (Average) and Std (Fluctuations) for both metrics
+        # Absolute SASA (nm^2)
+        avg_abs_sasa = np.mean(sasa_per_frame_per_res, axis=0)
+        std_abs_sasa = np.std(sasa_per_frame_per_res, axis=0)
 
-        # 4. Average over time (frames)
-        # Resulting shape: (n_residues,)
-        avg_sasa_array = np.mean(sasa_per_frame_per_res, axis=0)
+        # Compute Relative Solvent Accessibility (RSA)
+        residue_names = [res.name[:3].upper() for res in t_prot.topology.residues]
+        max_vals = np.array([TIEN_MAX_SASA.get(name, 1.0) for name in residue_names])
 
-        return avg_sasa_array
+        # This divides every frame's SASA by the MaxSASA for that residue type
+        rsa_per_frame = sasa_per_frame_per_res / max_vals
 
-    def compute_hydration_density(self, bins=50, Rmax=30.0):
-        """
-        Compute time-averaged 3D hydration density of solvent around the protein
-        in a protein-centered reference frame.
-        """
-        solvent = self.u.select_atoms("resname SOL or resname WAT or resname HOH")
+        # Relative SASA (RSA - normalized 0 to 1)
+        avg_rel_sasa = np.mean(rsa_per_frame, axis=0)
+        std_rel_sasa = np.std(rsa_per_frame, axis=0)
 
-        n_frames = len(self.u.trajectory)
-
-        # Define fixed spatial domain (protein-centered)
-        my_range = [[-Rmax, Rmax], [-Rmax, Rmax], [-Rmax, Rmax]]
-
-        # Use float array: density is real-valued
-        grid = np.zeros((bins, bins, bins), dtype=float)
-
-        for ts in self.u.trajectory:
-            protein_com = self.protein_atoms.center_of_mass()
-            relative_pos = solvent.positions - protein_com
-
-            h, _ = np.histogramdd(relative_pos, bins=bins, range=my_range)
-            grid += h
-
-        # Time average
-        grid /= n_frames
-
-        return grid
-
-    def pooled_gyration_properties(self):
-        """
-        Pools the gyration tensor properties into frame-independent descriptors.
-        """
-
-        results_dict = self.compute_gyration_tensor_properties()
-        asphericity = np.array(results_dict["asphericity"])
-        prolateness = np.array(results_dict["prolateness"])
-        eigenvals = np.array(results_dict["eigenvalues"])  # Shape (T, 3)
-
-        pooled = {
-            # Mean values (First Moment)
-            "mean_asphericity": np.mean(asphericity),
-            "mean_prolateness": np.mean(prolateness),
-            "mean_eigenvalues": np.mean(eigenvals, axis=0),
-            # Fluctuations (Second Moment)
-            "std_asphericity": np.std(asphericity),
-            # Distribution (For Histograms)
-            "asphericity_hist": np.histogram(asphericity, bins=30, density=True),
-            "prolateness_hist": np.histogram(prolateness, bins=30, density=True),
+        return {
+            "res_names": residue_names,
+            "abs_mean": avg_abs_sasa,  # Physical area (nm^2)
+            "abs_std": std_abs_sasa,  # Area fluctuations
+            "rel_mean": avg_rel_sasa,  # Normalized exposure (0-1)
+            "rel_std": std_rel_sasa,  # Relative flexibility
         }
-        return pooled
 
     def pooled_dihedral_entropy(self, bins=60):
         """
@@ -389,50 +433,12 @@ class ProteinAnalyzer:
 
         return pooled_entropy
 
-    def hydration_density_on_sequence(self, bins, Rmax, cutoff):
-        """
-        Maps 3D hydration density back to a 1D sequence array.
-        """
-        grid = self.compute_hydration_density(bins=bins, Rmax=Rmax)
-        # 1. Reconstruct the grid coordinate system
-        lin = np.linspace(-Rmax, Rmax, bins)
-        grid_x, grid_y, grid_z = np.meshgrid(lin, lin, lin, indexing="ij")
-        # Create a (N_voxels, 3) array of all grid point coordinates
-        grid_coords = np.vstack([grid_x.ravel(), grid_y.ravel(), grid_z.ravel()]).T
-        grid_flat = grid.ravel()
-
-        n_residues = len(self.protein_atoms.residues)
-        hydration_per_res = np.zeros(n_residues)
-
-        # 2. Get protein COM to match the centering used in your grid calculation
-        protein_com = self.protein_atoms.center_of_mass()
-
-        # 3. For each residue, find which grid points are nearby
-        for i, res in enumerate(self.protein_atoms.residues):
-            # Shift residue positions to protein-centered frame
-            res_pos = res.atoms.positions - protein_com
-
-            # We use a KDTree or simple distance check to find voxels near the residue
-            # For simplicity in this snippet, we'll check distances:
-            # (For large grids, using scipy.spatial.cKDTree is much faster)
-            for atom_pos in res_pos:
-                dist_sq = np.sum((grid_coords - atom_pos) ** 2, axis=1)
-                mask = dist_sq < cutoff**2
-
-                # Sum the density in these voxels
-                hydration_per_res[i] += np.sum(grid_flat[mask])
-
-        # 4. Return normalized sequence array
-        return hydration_per_res
-
     def compute_all(
         self,
-        sasa_n_sphere=100,
+        sasa_n_sphere=960,
         sasa_stride=1,
-        hydration_bins=50,
-        hydration_rmax=30.0,
-        contact_cutoff=8.0,
         scaling_min_sep=5,
+        contact_cutoff=8.0,
     ):
         """
         Executes all analysis methods and aggregates results into a single dictionary.
@@ -440,50 +446,26 @@ class ProteinAnalyzer:
         Returns:
             dict: Comprehensive analysis results.
         """
-        print("Starting comprehensive protein analysis...")
-
         results = {}
+        results["Ree"] = self.compute_mean_squared_end_to_end_distance()
 
-        # 1. Basic Dimensions
-        print("-> Computing dimensions (Rg, End-to-End)...")
-
-        results["ms_end_to_end"] = self.compute_mean_squared_end_to_end_distance()
-        results["ms_radius_of_gyration"] = (
-            self.compute_mean_squared_radius_of_gyration()
+        gyration_output = self.compute_gyration_tensor_properties()
+        results.update(
+            get_ensemble_summary(
+                gyration_output, include_min_max=False, include_histogram=False, bins=20
+            )
         )
 
-        # 2. Global Topology & Scaling
-        print("-> Computing gyration tensor and scaling exponent...")
-        results["pooled_gyration_tensor"] = self.pooled_gyration_properties()
         results["scaling_exponent"] = self.compute_scaling_exponent(
             min_sep=scaling_min_sep
         )
-
-        # 3. Secondary Structure
-        print("-> Computing DSSP propensities...")
         results["secondary_structure"] = self.compute_secondary_structure_propensities()
-
-        # 4. Backbone Grammar (Entropy/Dihedrals)
-        print("-> Computing dihedral distributions and entropy...")
         results["pooled_dihedrals_entropy"] = self.pooled_dihedral_entropy()
-
-        # 5. Network Dynamics & Correlations
-        print("-> Computing DCCM and distance fluctuations...")
         results["dccm"] = self.compute_dccm()
         results["distance_fluctuations"] = self.compute_distance_fluctuations()
-
-        # 6. Geometric Features
-        print("-> Computing contact map...")
         results["contact_map"] = self.compute_contact_map(cutoff=contact_cutoff)
-
-        # 7. Solvent-Solute Interactions
-        print("-> Computing SASA and hydration density (this may take a while)...")
-        results["residue_sasa"] = self.compute_residue_sasa(
-            n_sphere_points=sasa_n_sphere, stride=sasa_stride
-        )
-        results["hydration_density"] = self.hydration_density_on_sequence(
-            bins=hydration_bins, Rmax=hydration_rmax, cutoff=contact_cutoff
+        results.update(
+            self.compute_residue_sasa(n_sphere_points=sasa_n_sphere, stride=sasa_stride)
         )
 
-        print("Analysis complete.")
         return results
