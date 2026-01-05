@@ -5,3 +5,7 @@ env_IDP-MDP/*
 env_cg2all/*
 .DS_Store
 .vscode/*
+src/idpmdp/backmapping.py
+*.stderr
+*.stdout
+error_log.txt
