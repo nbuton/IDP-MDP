@@ -3,26 +3,11 @@ import subprocess
 import numpy as np
 import mdtraj as md
 from openmm.app import PDBFile, ForceField, Simulation, PME, HBonds
-from openmm import LangevinMiddleIntegrator, OpenMMException, Platform
+from openmm import LangevinMiddleIntegrator, Platform
 from openmm.unit import nanometer, picosecond, picoseconds, kelvin
 import time
-from pathlib import Path
-from tqdm import tqdm
+from utils import get_pdb_directories
 import logging
-
-
-def get_pdb_directories(root_path):
-    """
-    Returns a set of unique Path objects representing directories
-    that contain at least one .pdb file.
-    """
-    root = Path(root_path)
-
-    # .rglob('*') searches recursively
-    # .parent gets the directory containing the file
-    pdb_dirs = {p.parent for p in root.rglob("*.pdb") if p.is_file()}
-
-    return pdb_dirs
 
 
 class IDRomeBackmapper:
@@ -115,11 +100,7 @@ class IDRomeBackmapper:
             print(f"--- 2. Reconstructing All-Atom using {self.cg_model} ---")
             self._reconstruct(fixed_pdb, fixed_dcd, aa_pdb, aa_dcd)
 
-            # Skip minimization because it was only on the first frame and can cause discrepency with other frames for dynamic statistics computation
-            # print(f"--- 3. Energy Minimizing All-Atom Model ---")
-            # self._minimize(aa_pdb)
-
-            print(f"--- 4. Converting Trajectory to XTC ---")
+            print(f"--- 3. Converting Trajectory to XTC ---")
             self._convert_to_xtc(aa_dcd, aa_pdb, aa_xtc)
 
             print(f"Done in {time.time()-start_time}s")
@@ -169,57 +150,6 @@ class IDRomeBackmapper:
             self.device,
         ]
         subprocess.run(cmd, check=True)
-
-    def _minimize(self, aa_pdb_path):
-        """Refines the backmapped model using OpenMM and Amber14."""
-        top_aa = md.load_pdb(aa_pdb_path)
-        translated = top_aa.xyz[0] - np.mean(top_aa.xyz[0], axis=0)
-        l_em = np.ceil(np.max(translated.max(axis=0) - translated.min(axis=0))) + 2
-
-        # Save a temporary file for minimization input to avoid file lock issues
-        temp_min_in = aa_pdb_path.replace(".pdb", "_min_in.pdb")
-        md.Trajectory(
-            translated, top_aa.top, 0, [l_em, l_em, l_em], [90, 90, 90]
-        ).save_pdb(temp_min_in)
-
-        pdb_em = PDBFile(temp_min_in)
-        ff = ForceField("amber14-all.xml", "amber14/tip3pfb.xml")
-        system = ff.createSystem(
-            pdb_em.topology,
-            nonbondedMethod=PME,
-            nonbondedCutoff=1.0 * nanometer,
-            constraints=HBonds,
-        )
-        intg = LangevinMiddleIntegrator(
-            300 * kelvin, 1 / picosecond, 0.004 * picoseconds
-        )
-
-        # Specific platform selection as requested
-        if self.device == "cuda":
-            platform = Platform.getPlatformByName("OpenCL")
-        else:
-            platform = Platform.getPlatformByName("CPU")
-
-        sim = Simulation(pdb_em.topology, system, intg, platform)
-        sim.context.setPositions(pdb_em.positions)
-        state = sim.context.getState(getEnergy=True)
-        print(f"Potential Energy before minimization: {state.getPotentialEnergy()}")
-        sim.minimizeEnergy()
-        state = sim.context.getState(getEnergy=True)
-        print(f"Potential Energy after minimization: {state.getPotentialEnergy()}")
-
-        # Save minimized coordinates back to the final AA PDB name
-        state = sim.context.getState(getPositions=True)
-        md.Trajectory(
-            state.getPositions(asNumpy=True).value_in_unit(nanometer),
-            top_aa.top,
-            0,
-            [l_em, l_em, l_em],
-            [90, 90, 90],
-        ).save_pdb(aa_pdb_path)
-
-        if os.path.exists(temp_min_in):
-            os.remove(temp_min_in)
 
     def _convert_to_xtc(self, dcd_path, pdb_path, xtc_path):
         """Converts intermediate DCD to final XTC."""

@@ -1,5 +1,20 @@
 import numpy as np
 import diptest
+from pathlib import Path
+
+
+def get_pdb_directories(root_path):
+    """
+    Returns a set of unique Path objects representing directories
+    that contain at least one .pdb file.
+    """
+    root = Path(root_path)
+
+    # .rglob('*') searches recursively
+    # .parent gets the directory containing the file
+    pdb_dirs = {p.parent for p in root.rglob("*.pdb") if p.is_file()}
+
+    return pdb_dirs
 
 
 def test_multimodality(data, alpha=0.05):
