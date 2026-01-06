@@ -4,12 +4,17 @@ from idpmdp.utils import get_pdb_directories
 from idpmdp.protein_analyzer import ProteinAnalyzer
 from pathlib import Path
 
-if __name__ == "__main__":
-    all_idp_dir = get_pdb_directories("data/IDRome/IDRome_v4/")
 
-    for directory_path in all_idp_dir:
+def compute_all_for_one_protein(directory_path):
+    output_file = directory_path / "properties.h5"
+    # Skip if the file already exists
+    if output_file.exists():
+        return f"Skipping {directory_path.name}: properties.h5 already exists."
+
+    try:
         pdb_path = directory_path / "top_AA.pdb"
         xtc_path = directory_path / "traj_AA.xtc"
+
         analyzer = ProteinAnalyzer(pdb_path, xtc_path)
         results = analyzer.compute_all(
             sasa_n_sphere=960,
@@ -17,4 +22,16 @@ if __name__ == "__main__":
             contact_cutoff=8.0,
             scaling_min_sep=5,
         )
-        # TODO: Save results to file
+        analyzer.save_all(results, output_folder=directory_path)
+        return f"Successfully processed {directory_path.name}"
+    except Exception as e:
+        return f"Error processing {directory_path.name}: {e}"
+
+
+if __name__ == "__main__":
+    all_idp_dir = get_pdb_directories("data/IDRome/IDRome_v4/")
+    n_jobs = 30
+    results = Parallel(n_jobs=n_jobs, prefer="processes")(
+        delayed(compute_all_for_one_protein)(directory_path)
+        for directory_path in all_idp_dir
+    )
