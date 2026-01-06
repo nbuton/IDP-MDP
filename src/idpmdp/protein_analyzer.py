@@ -3,12 +3,11 @@ from MDAnalysis.analysis import distances
 import numpy as np
 from prody import Ensemble
 import mdtraj as md
-from idpmdp.utils import get_ensemble_summary
+from idpmdp.utils import get_ensemble_summary, mean_std
 from scipy.stats import linregress
 import h5py
 from pathlib import Path
 from scipy.spatial.distance import pdist
-from utils import mean_std
 
 
 class ProteinAnalyzer:
