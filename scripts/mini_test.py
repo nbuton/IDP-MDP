@@ -67,11 +67,11 @@ if __name__ == "__main__":
     # Test IDRome
     print("Analysing ensemble from IDRome")
     start_time = time.time()
-    pdb_path = Path("data/IDRome/IDRome_v4/Q5/SY/C1/270_327/top_AA.pdb")
-    xtc_path = Path("data/IDRome/IDRome_v4/Q5/SY/C1/270_327/traj_AA.xtc")
+    pdb_path = Path("data/IDRome/IDRome_v4/Q5/T7/B8/541_1292/top_AA.pdb")
+    xtc_path = Path("data/IDRome/IDRome_v4/Q5/T7/B8/541_1292/traj_AA.xtc")
     analyzer = ProteinAnalyzer(pdb_path, xtc_path)
     results = analyzer.compute_all(
-        sasa_n_sphere=430,
+        sasa_n_sphere=960,
         sasa_stride=1,
         contact_cutoff=8.0,
         scaling_min_sep=5,

@@ -361,10 +361,7 @@ class ProteinAnalyzer:
         }
 
         # Load the trajectory
-        if self.xtc_path is None:
-            t = md.load(self.pdb_path, stride=stride)
-        else:
-            t = md.load(self.xtc_path, top=self.pdb_path, stride=stride)
+        t = md.load(self.xtc_path, top=self.pdb_path, stride=stride)
 
         # Select only the protein (standard practice to avoid membrane/solvent interference)
         protein_indices = t.topology.select("protein")
@@ -392,7 +389,6 @@ class ProteinAnalyzer:
         std_rel_sasa = np.std(rsa_per_frame, axis=0)
 
         return {
-            "res_names": residue_names,
             "abs_mean": avg_abs_sasa,  # Physical area (nm^2)
             "abs_std": std_abs_sasa,  # Area fluctuations
             "rel_mean": avg_rel_sasa,  # Normalized exposure (0-1)
