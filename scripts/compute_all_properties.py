@@ -31,7 +31,7 @@ def compute_all_for_one_protein(directory_path):
 if __name__ == "__main__":
     all_idp_dir = get_pdb_directories("data/IDRome/IDRome_v4/")
     n_jobs = 30
-    results = Parallel(n_jobs=n_jobs, prefer="processes")(
+    results = Parallel(n_jobs=n_jobs, prefer="processes", verbose=10)(
         delayed(compute_all_for_one_protein)(directory_path)
         for directory_path in all_idp_dir
     )
