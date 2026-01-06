@@ -1,12 +1,14 @@
 import MDAnalysis
 from MDAnalysis.analysis import distances
-from MDAnalysis.analysis.dssp import DSSP
 import numpy as np
 from prody import Ensemble
 import mdtraj as md
-import logging
 from idpmdp.utils import get_ensemble_summary
 from scipy.stats import linregress
+import h5py
+from pathlib import Path
+from scipy.spatial.distance import pdist
+from utils import mean_std
 
 
 class ProteinAnalyzer:
@@ -46,60 +48,72 @@ class ProteinAnalyzer:
         print(f"Loaded Universe with {len(self.u.trajectory)} frames.")
         print(f"Protein size: {self.protein_size} residues.")
 
-    def compute_end_to_end_distance(self):
+    def compute_maximum_diameter(self):
         """
-        Calculates the distance between the CA atoms of the
-        first and last residues across the trajectory.
+        Calculates the maximum distance between any two CA atoms
+        (Dmax) for each frame in the trajectory.
         """
-        start_ca = self.u.select_atoms(f"resid {self.residues[0].resid} and name CA")
-        end_ca = self.u.select_atoms(f"resid {self.residues[-1].resid} and name CA")
-        # Ensure single atom selections
-        assert (
-            len(start_ca) == 1
-        ), f"Start residue CA atom not found. Available atoms names: {self.residues[0].atoms.names}"
-        assert (
-            len(end_ca) == 1
-        ), f"End residue CA atom not found.Available atoms names: {self.residues[0].atoms.names}"
+        # 1. Pre-select CA atoms to avoid overhead inside the loop
+        ca_atoms = self.u.select_atoms("name CA")
 
-        all_distances = []
+        all_dmax = []
+
+        # 2. Iterate through trajectory
         for ts in self.u.trajectory:
-            resA, resB, dist = distances.dist(start_ca, end_ca)
-            all_distances.append(dist)
+            # Get the coordinates for the current frame
+            coords = ca_atoms.positions
 
-        return np.array(all_distances)
+            # pdist computes the distance between every pair of atoms (n*(n-1)/2 distances)
+            # np.max gives us the largest of those distances
+            dmax = np.max(pdist(coords))
+            all_dmax.append(dmax)
 
-    def compute_mean_squared_end_to_end_distance(self):
-        """Computes the Mean Squared End-to-End Distance (MSED) over the trajectory."""
-        dists = self.compute_end_to_end_distance()
-        return np.mean(dists**2)
-
-    def compute_mean_squared_radius_of_gyration(self):
-        """Computes the Mean Squared Radius of Gyration (MSRG) over the trajectory."""
-        rg_values = self.compute_radius_of_gyration()
-        return np.mean(rg_values**2)
+        return np.array(all_dmax)
 
     def compute_secondary_structure_propensities(self):
         """
-        Computes the propensity of each secondary structure element
-        per residue over the trajectory.
+        Computes the SS8 (DSSP) propensity of each secondary structure element
+        per residue over the trajectory using MDTraj.
         """
-        # 1. Run the DSSP analysis
-        # selection=self.u.select_atoms("protein") is recommended if you have ligands/solvent
-        if self.is_coarse_grained:
-            backbone = self.u.select_atoms("name N or name CA or name C or name O")
-            dssp_ana = DSSP(backbone).run(guess_hydrogens=True)
-        else:
-            dssp_ana = DSSP(self.u).run()
 
-        # 2. Use the one-hot encoded array (n_frames, n_residues, 3)
-        # Index 0: Coil '-', Index 1: Helix 'H', Index 2: Sheet 'E'
-        data = dssp_ana.results.dssp_ndarray
+        # 1. Load trajectory with MDTraj
+        traj = md.load_xtc(self.xtc_path, top=self.pdb_path)
 
-        # 3. Average across the frame axis (axis 0)
-        # Resulting shape: (n_residues, 3)
-        propensities = np.mean(data, axis=0)
+        # Optional: restrict to protein residues only
+        traj = traj.atom_slice(traj.top.select("protein"))
 
-        resids = np.array([res.resid for res in self.residues])
+        # 2. Compute DSSP with full 8-class output
+        # Output shape: (n_frames, n_residues)
+        dssp = md.compute_dssp(traj, simplified=False)
+
+        # 3. Map DSSP symbols to SS8 labels (space -> C)
+        mapping = {
+            "H": "H",  # alpha helix
+            "G": "G",  # 3-10 helix
+            "I": "I",  # pi helix
+            "E": "E",  # beta strand
+            "B": "B",  # beta bridge
+            "T": "T",  # turn
+            "S": "S",  # bend
+            " ": "C",  # coil
+        }
+
+        ss8_labels = ["H", "G", "I", "E", "B", "T", "S", "C"]
+        n_frames, n_residues = dssp.shape
+
+        # 4. Compute per-residue propensities
+        propensities = {k: np.zeros(n_residues) for k in ss8_labels}
+
+        for f in range(n_frames):
+            for i, code in enumerate(dssp[f]):
+                propensities[mapping[code]][i] += 1
+
+        # Normalize by number of frames
+        for k in propensities:
+            propensities[k] /= n_frames
+
+        # 5. Sanity check on residue indexing (as in your original code)
+        resids = np.array([res.resSeq for res in traj.topology.residues])
         assert np.all(
             np.diff(resids) > 0
         ), "Residues are not in order or contain duplicates!"
@@ -107,13 +121,14 @@ class ProteinAnalyzer:
             np.diff(resids) == 1
         ), f"Gap detected in residue sequence: {resids}"
 
-        dict_propensities = {
-            "coil_propensity": propensities[:, 0],
-            "helix_propensity": propensities[:, 1],
-            "sheet_propensity": propensities[:, 2],
-        }
+        return {f"ss_propensity_{k}": v for k, v in propensities.items()}
 
-        return dict_propensities
+    def compute_max_diameter(self):
+        # Get coordinates of C-alpha atoms for the current frame
+        ca_coords = self.u.select_atoms("name CA").positions
+        # pdist computes pairwise distances between all atoms
+        distances = pdist(ca_coords)
+        return np.max(distances)
 
     # --- GLOBAL TOPOLOGY ---
 
@@ -389,10 +404,10 @@ class ProteinAnalyzer:
         std_rel_sasa = np.std(rsa_per_frame, axis=0)
 
         return {
-            "abs_mean": avg_abs_sasa,  # Physical area (nm^2)
-            "abs_std": std_abs_sasa,  # Area fluctuations
-            "rel_mean": avg_rel_sasa,  # Normalized exposure (0-1)
-            "rel_std": std_rel_sasa,  # Relative flexibility
+            "sasa_abs_mean": avg_abs_sasa,  # Physical area (nm^2)
+            "sasa_abs_std": std_abs_sasa,  # Area fluctuations
+            "sasa_rel_mean": avg_rel_sasa,  # Normalized exposure (0-1)
+            "sasa_rel_std": std_rel_sasa,  # Relative flexibility
         }
 
     def pooled_dihedral_entropy(self, bins=60):
@@ -405,7 +420,7 @@ class ProteinAnalyzer:
         psi_array = results["psi"]
 
         n_frames, n_res = phi_array.shape
-        pooled_entropy = {"phi": [], "psi": []}
+        pooled_entropy = {"phi_dihedrals_entropy": [], "psi_dihedrals_entropy": []}
 
         for i in range(n_res):
             # Process PHI for residue i
@@ -424,9 +439,15 @@ class ProteinAnalyzer:
             p_psi = p_psi[p_psi > 0]
             s_psi = -np.sum(p_psi * np.log(p_psi))
 
-            pooled_entropy["phi"].append(s_phi)
-            pooled_entropy["psi"].append(s_psi)
+            pooled_entropy["phi_dihedrals_entropy"].append(s_phi)
+            pooled_entropy["psi_dihedrals_entropy"].append(s_psi)
 
+        pooled_entropy["phi_dihedrals_entropy"] = np.array(
+            pooled_entropy["phi_dihedrals_entropy"]
+        )
+        pooled_entropy["psi_dihedrals_entropy"] = np.array(
+            pooled_entropy["psi_dihedrals_entropy"]
+        )
         return pooled_entropy
 
     def compute_all(
@@ -443,8 +464,13 @@ class ProteinAnalyzer:
             dict: Comprehensive analysis results.
         """
         results = {}
-        results["Ree"] = self.compute_mean_squared_end_to_end_distance()
 
+        results["avg_squared_Ree"], results["std_squared_Ree"] = mean_std(
+            self.compute_end_to_end_distance(), squared=True
+        )
+        results["avg_maximum_diameter"], results["std_maximum_diameter"] = mean_std(
+            self.compute_maximum_diameter(), squared=False
+        )
         gyration_output = self.compute_gyration_tensor_properties()
         results.update(
             get_ensemble_summary(
@@ -455,8 +481,8 @@ class ProteinAnalyzer:
         results["scaling_exponent"] = self.compute_scaling_exponent(
             min_sep=scaling_min_sep
         )
-        results["secondary_structure"] = self.compute_secondary_structure_propensities()
-        results["pooled_dihedrals_entropy"] = self.pooled_dihedral_entropy()
+        results.update(self.compute_secondary_structure_propensities())
+        results.update(self.pooled_dihedral_entropy())
         results["dccm"] = self.compute_dccm()
         results["distance_fluctuations"] = self.compute_distance_fluctuations()
         results["contact_map"] = self.compute_contact_map(cutoff=contact_cutoff)
@@ -465,3 +491,26 @@ class ProteinAnalyzer:
         )
 
         return results
+
+    def save_all(self, results, output_folder: Path):
+        filename = output_folder / "properties.h5"
+
+        with h5py.File(filename, "w") as hf:
+            for key, value in results.items():
+                # Convert lists/tuples to numpy arrays for HDF5 compatibility
+                if isinstance(value, (list, tuple)):
+                    value = np.array(value)
+
+                if isinstance(value, np.ndarray) and value.ndim > 0:
+                    hf.create_dataset(
+                        key,
+                        data=value,
+                        dtype="float32",
+                        compression="gzip",
+                        compression_opts=4,  # Ranges from 0-9
+                    )
+                else:
+                    # Scalars cannot be compressed in HDF5
+                    hf.create_dataset(key, data=value)
+
+        print(f"Successfully saved data to {filename}")

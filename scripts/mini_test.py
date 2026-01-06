@@ -43,7 +43,7 @@ def print_results(data, indent=0):
         for key, value in data.items():
             # Handle specific types for the label
             if isinstance(value, np.ndarray):
-                print(f"{spacing}{key}: Array {value.shape}")
+                print(f"{spacing}{key}: Array {value.shape} : Dtype: {value.dtype}")
             elif isinstance(value, (list, tuple)):
                 # Peek at the first element to check if it's a list of arrays
                 if len(value) > 0 and isinstance(value[0], np.ndarray):
@@ -67,16 +67,21 @@ if __name__ == "__main__":
     # Test IDRome
     print("Analysing ensemble from IDRome")
     start_time = time.time()
-    pdb_path = Path("data/IDRome/IDRome_v4/Q5/T7/B8/541_1292/top_AA.pdb")
-    xtc_path = Path("data/IDRome/IDRome_v4/Q5/T7/B8/541_1292/traj_AA.xtc")
+    IDP_folder = Path("data/IDRome/IDRome_v4/Q5/T7/B8/541_1292/")
+    pdb_path = Path(IDP_folder / "top_AA.pdb")
+    xtc_path = Path(IDP_folder / "traj_AA.xtc")
     analyzer = ProteinAnalyzer(pdb_path, xtc_path)
     results = analyzer.compute_all(
-        sasa_n_sphere=960,
-        sasa_stride=1,
+        sasa_n_sphere=100,  # 960
+        sasa_stride=10,  # 1
         contact_cutoff=8.0,
         scaling_min_sep=5,
     )
+    analyzer.save_all(results, output_folder=IDP_folder)
     print_results(results)
+    print("dccm:", results["dccm"][:5, :5])
+    print("distance_fluctuations:", results["distance_fluctuations"][:5, :5])
+    print("contact_map:", results["contact_map"][:5, :5])
     print(f"\nTotal analysis time: {time.time() - start_time:.2f} seconds")
     exit(1)
 

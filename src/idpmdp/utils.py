@@ -72,3 +72,11 @@ def get_ensemble_summary(
             summary[f"{key}_hist_edges"] = bin_edges
 
     return summary
+
+
+def mean_std(array, squared: bool):
+    if squared:
+        new_array = array**2
+    else:
+        new_array = array
+    return np.mean(new_array), np.std(new_array)
