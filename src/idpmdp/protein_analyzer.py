@@ -47,6 +47,28 @@ class ProteinAnalyzer:
         print(f"Loaded Universe with {len(self.u.trajectory)} frames.")
         print(f"Protein size: {self.protein_size} residues.")
 
+    def compute_end_to_end_distance(self):
+        """
+        Calculates the distance between the CA atoms of the
+        first and last residues across the trajectory.
+        """
+        start_ca = self.u.select_atoms(f"resid {self.residues[0].resid} and name CA")
+        end_ca = self.u.select_atoms(f"resid {self.residues[-1].resid} and name CA")
+        # Ensure single atom selections
+        assert (
+            len(start_ca) == 1
+        ), f"Start residue CA atom not found. Available atoms names: {self.residues[0].atoms.names}"
+        assert (
+            len(end_ca) == 1
+        ), f"End residue CA atom not found.Available atoms names: {self.residues[0].atoms.names}"
+
+        all_distances = []
+        for ts in self.u.trajectory:
+            resA, resB, dist = distances.dist(start_ca, end_ca)
+            all_distances.append(dist)
+
+        return np.array(all_distances)
+
     def compute_maximum_diameter(self):
         """
         Calculates the maximum distance between any two CA atoms
