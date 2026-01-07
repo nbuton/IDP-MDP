@@ -202,7 +202,7 @@ class ProteinAnalyzer:
             results["relative_acylindricity"].append(rel_acylindricity)
             results["relative_anisotropy"].append(rel_shape_anisotropy)
             results["prolateness"].append(prolateness)
-        return results
+        return {key: np.array(value) for key, value in results.items()}
 
     def compute_scaling_exponent(self, min_sep=5):
         """Vectorized calculation of the scaling exponent with improved statistics."""
@@ -244,7 +244,7 @@ class ProteinAnalyzer:
 
     # --- BACKBONE GRAMMAR ---
 
-    def compute_dihedral_distribution_and_entropy(self):
+    def compute_dihedral_distribution(self):
         """Uses MDTraj to compute Dihedrals and X-Entropy for S_conf."""
         if self.xtc_path is None:
             t = md.load(self.pdb_path)
@@ -436,7 +436,7 @@ class ProteinAnalyzer:
         phi_array: shape (n_frames, n_residues)
         psi_array: shape (n_frames, n_residues)
         """
-        results = self.compute_dihedral_distribution_and_entropy()
+        results = self.compute_dihedral_distribution()
         phi_array = results["phi"]
         psi_array = results["psi"]
 
