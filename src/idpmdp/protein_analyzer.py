@@ -8,6 +8,7 @@ from scipy.stats import linregress
 import h5py
 from pathlib import Path
 from scipy.spatial.distance import pdist
+from prody.measure import superpose
 
 
 class ProteinAnalyzer:
@@ -29,22 +30,30 @@ class ProteinAnalyzer:
             trajectory = xtc_path  # This can be None, a string, or a list
 
         if trajectory is None:
-            self.u = MDAnalysis.Universe(topology)
+            self.md_analysis_u = MDAnalysis.Universe(topology)
+            self.md_traj = md.load(self.pdb_path)
+            raise RuntimeError(
+                "Be carefull no trajectory is loaded. Delete this raise if you known what you do"
+            )
         else:
-            self.u = MDAnalysis.Universe(topology, trajectory)
+            self.md_analysis_u = MDAnalysis.Universe(topology, trajectory)
+            self.md_traj = md.load(self.xtc_path, top=self.pdb_path)
+
         # Verify that the universe contains only one segment
         assert (
-            len(self.u.segments) == 1
+            len(self.md_analysis_u.segments) == 1
         ), "The provided PDB file contains multiple segments."
 
         # Identify the protein and its size
-        heavy_atoms = self.u.select_atoms("not element H")
-        self.is_coarse_grained = len(heavy_atoms) < (len(self.u.residues) * 4)
-        self.protein_atoms = self.u.select_atoms("protein")
+        heavy_atoms = self.md_analysis_u.select_atoms("not element H")
+        self.is_coarse_grained = len(heavy_atoms) < (
+            len(self.md_analysis_u.residues) * 4
+        )
+        self.protein_atoms = self.md_analysis_u.select_atoms("protein")
         self.residues = self.protein_atoms.residues
         self.protein_size = len(self.residues)
 
-        print(f"Loaded Universe with {len(self.u.trajectory)} frames.")
+        print(f"Loaded Universe with {len(self.md_analysis_u.trajectory)} frames.")
         print(f"Protein size: {self.protein_size} residues.")
 
     def compute_end_to_end_distance(self):
@@ -52,8 +61,12 @@ class ProteinAnalyzer:
         Calculates the distance between the CA atoms of the
         first and last residues across the trajectory.
         """
-        start_ca = self.u.select_atoms(f"resid {self.residues[0].resid} and name CA")
-        end_ca = self.u.select_atoms(f"resid {self.residues[-1].resid} and name CA")
+        start_ca = self.md_analysis_u.select_atoms(
+            f"resid {self.residues[0].resid} and name CA"
+        )
+        end_ca = self.md_analysis_u.select_atoms(
+            f"resid {self.residues[-1].resid} and name CA"
+        )
         # Ensure single atom selections
         assert (
             len(start_ca) == 1
@@ -63,7 +76,7 @@ class ProteinAnalyzer:
         ), f"End residue CA atom not found.Available atoms names: {self.residues[0].atoms.names}"
 
         all_distances = []
-        for ts in self.u.trajectory:
+        for ts in self.md_analysis_u.trajectory:
             resA, resB, dist = distances.dist(start_ca, end_ca)
             all_distances.append(dist)
 
@@ -75,12 +88,12 @@ class ProteinAnalyzer:
         (Dmax) for each frame in the trajectory.
         """
         # 1. Pre-select CA atoms to avoid overhead inside the loop
-        ca_atoms = self.u.select_atoms("name CA")
+        ca_atoms = self.md_analysis_u.select_atoms("name CA")
 
         all_dmax = []
 
         # 2. Iterate through trajectory
-        for ts in self.u.trajectory:
+        for ts in self.md_analysis_u.trajectory:
             # Get the coordinates for the current frame
             coords = ca_atoms.positions
 
@@ -146,7 +159,7 @@ class ProteinAnalyzer:
 
     def compute_max_diameter(self):
         # Get coordinates of C-alpha atoms for the current frame
-        ca_coords = self.u.select_atoms("name CA").positions
+        ca_coords = self.md_analysis_u.select_atoms("name CA").positions
         # pdist computes pairwise distances between all atoms
         distances = pdist(ca_coords)
         return np.max(distances)
@@ -162,99 +175,100 @@ class ProteinAnalyzer:
             "gyration_l1/l3": [],
             "gyration_l2/l3": [],
             "radius_of_gyration": [],
-            "relative_asphericity": [],
-            "relative_acylindricity": [],
-            "relative_anisotropy": [],
+            "asphericity": [],
+            "normalized_acylindricity": [],
+            "rel_shape_anisotropy": [],
             "prolateness": [],
         }
 
-        weights = self.protein_atoms.masses
-        total_mass = self.protein_atoms.total_mass()
+        protein_traj = self.md_traj.atom_slice(self.md_traj.topology.select("protein"))
 
-        for ts in self.u.trajectory:
-            # 1. Manually compute the Gyration Tensor (Mass-weighted)
-            pos = self.protein_atoms.positions - self.protein_atoms.center_of_mass()
-            tensor = np.dot(pos.T, pos * weights[:, np.newaxis]) / total_mass
-            eigvals = np.sort(np.linalg.eigvalsh(tensor))
+        eigvals = md.principal_moments(protein_traj)
 
-            l1, l2, l3 = eigvals
-            rg2 = l1 + l2 + l3
-            rg = np.sqrt(rg2)
-            mean_l = rg2 / 3.0
-
-            rel_asphericity = (l3 - 0.5 * (l1 + l2)) / rg2
-            rel_acylindricity = (l2 - l1) / rg2
-            rel_shape_anisotropy = (
-                (l3 - l2) ** 2 + (l3 - l1) ** 2 + (l2 - l1) ** 2
-            ) / (2 * (rg2**2))
-            prolateness = ((l1 - mean_l) * (l2 - mean_l) * (l3 - mean_l)) / (mean_l**3)
-
+        for one_set_of_eigvals in eigvals:
+            l1, l2, l3 = one_set_of_eigvals
             results["gyration_eigenvalues_l1"].append(l1)
             results["gyration_eigenvalues_l2"].append(l2)
             results["gyration_eigenvalues_l3"].append(l3)
-
             results["gyration_l1/l2"].append(l1 / l2 if l2 > 0 else 0)
             results["gyration_l1/l3"].append(l1 / l3 if l3 > 0 else 0)
             results["gyration_l2/l3"].append(l2 / l3 if l3 > 0 else 0)
 
+            rg2 = (
+                l1 + l2 + l3
+            )  # The square of the radius of gyration and also the trace of the matrix
+            rg = np.sqrt(rg2)
             results["radius_of_gyration"].append(rg)
-            results["relative_asphericity"].append(rel_asphericity)
-            results["relative_acylindricity"].append(rel_acylindricity)
-            results["relative_anisotropy"].append(rel_shape_anisotropy)
+
+            asphericity = ((l1 - l2) ** 2 + (l1 - l3) ** 2 + (l2 - l3) ** 2) / (
+                2 * (rg2**2)
+            )
+            results["asphericity"].append(asphericity)
+
+            numerator_p = (2 * l1 - l2 - l3) * (2 * l2 - l1 - l3) * (2 * l3 - l1 - l2)
+            denominator_p = (
+                2 * (l1**2 + l2**2 + l3**2 - l1 * l2 - l1 * l3 - l2 * l3) ** 1.5
+            )
+            prolateness = numerator_p / denominator_p
             results["prolateness"].append(prolateness)
+
+            normalized_acylindricity = (l2 - l3) / rg2
+            results["normalized_acylindricity"].append(normalized_acylindricity)
+
+            # Assuming l1, l2, l3 are predefined numeric values
+            numerator_kappa = 3 * (l1 * l2 + l2 * l3 + l3 * l1)
+            denominator_kappa = (l1 + l2 + l3) ** 2
+            rel_shape_anisotropy = 1 - (numerator_kappa / denominator_kappa)
+            results["rel_shape_anisotropy"].append(rel_shape_anisotropy)
+
         return {key: np.array(value) for key, value in results.items()}
 
     def compute_scaling_exponent(self, min_sep=5):
-        """Vectorized calculation of the scaling exponent with improved statistics."""
-        ca = self.protein_atoms.select_atoms("name CA")
-        n_res = len(ca)
-        n_frames = len(self.u.trajectory)
+        """Scaling exponent ν using self.md_traj - Cα selection inside."""
 
-        # Pre-allocate sum of upper-triangle distance matrices
-        dist_vec_sum = np.zeros(int(n_res * (n_res - 1) / 2))
+        # Select only Cα atoms
+        ca_mask = self.md_traj.topology.select("name CA")
+        traj_ca = self.md_traj.atom_slice(ca_mask)
+        n_res = len(ca_mask)
 
-        # 1. Optimized trajectory loop
-        for ts in self.u.trajectory:
-            dist_vec_sum += distances.self_distance_array(ca.positions)
+        # Generate all Cα pairs with separation >= min_sep
+        pairs = []
+        for i in range(n_res):
+            for j in range(i + min_sep, n_res):
+                pairs.append([i, j])
+        pairs = np.array(pairs)
 
-        # Mean distance vector
-        dist_vec_avg = dist_vec_sum / n_frames
+        # Compute distances and bin by separation
+        dists = md.compute_distances(traj_ca, pairs)
+        r_mean = dists.mean(axis=0)
+        separations = pairs[:, 1] - pairs[:, 0]
 
-        # 2. Map 1D distances to separations |i-j|
-        iu = np.triu_indices(n_res, k=1)
-        separations = iu[1] - iu[0]
+        unique_seps = np.arange(min_sep, n_res)
+        r_binned = np.array(
+            [
+                r_mean[separations == s].mean()
+                for s in unique_seps
+                if np.any(separations == s)
+            ]
+        )
 
-        # 3. Fully vectorized mean distances per separation using bincount
-        n_list = np.arange(min_sep, n_res)
-        counts = np.bincount(separations, minlength=n_res)
-        r_sum = np.bincount(separations, weights=dist_vec_avg, minlength=n_res)
-        r_mean = r_sum[counts > 0] / counts[counts > 0]
-        r_mean = r_mean[: len(n_list)]  # Truncate to n_list range
+        # Log-log fit: log(r) = ν*log(s) + c
+        valid = np.isfinite(r_binned) & (r_binned > 0)
+        log_s = np.log(unique_seps[valid][: len(r_binned[valid])])
+        log_r = np.log(r_binned[valid])
 
-        # 4. Robust log-log linear regression (replaces polyfit)
-        mask = np.isfinite(np.log(r_mean)) & (r_mean > 0)
-        logn = np.log(n_list[mask])
-        logR = np.log(r_mean[mask])
+        nu = linregress(log_s, log_r).slope
 
-        result = linregress(logn, logR)
-        nu = result.slope
-        r_squared = result.rvalue**2
-
-        return nu  # , r_squared, n_list[mask], r_mean[mask]
-
-    # --- BACKBONE GRAMMAR ---
+        return nu
 
     def compute_dihedral_distribution(self):
         """Uses MDTraj to compute Dihedrals and X-Entropy for S_conf."""
-        if self.xtc_path is None:
-            t = md.load(self.pdb_path)
-        else:
-            t = md.load(self.xtc_path, top=self.pdb_path)
-        phi_indices, phi_angles = md.compute_phi(t)
-        psi_indices, psi_angles = md.compute_psi(t)
 
-        n_frames = t.n_frames
-        n_residues = t.topology.n_residues  # Total length L
+        phi_indices, phi_angles = md.compute_phi(self.md_traj)
+        psi_indices, psi_angles = md.compute_psi(self.md_traj)
+
+        n_frames = self.md_traj.n_frames
+        n_residues = self.md_traj.topology.n_residues  # Total length L
 
         # 2. Initialize full-sized arrays filled with NaNs
         # Shape: (n_frames, n_residues)
@@ -270,66 +284,36 @@ class ProteinAnalyzer:
 
         return {"phi": full_phi, "psi": full_psi}
 
-    # --- NETWORK DYNAMICS ---
-
     def compute_dccm(self):
-        """
-        Calculates the DCCM from an ensemble by first aligning to the mean.
-        Uses the direct covariance calculation to avoid ProDy class-type conflicts.
-        """
-        # 1. Coordinate Extraction
         ca = self.protein_atoms.select_atoms("name CA")
-        n_frames = len(self.u.trajectory)
+        n_frames = len(self.md_analysis_u.trajectory)
         n_atoms = len(ca)
 
+        # 1. Coordinate Extraction
         coords = np.zeros((n_frames, n_atoms, 3))
-        for i, ts in enumerate(self.u.trajectory):
+        for i, ts in enumerate(self.md_analysis_u.trajectory):
             coords[i] = ca.positions
 
-        # 2. Build the Ensemble and Align to Mean
+        # 2. Alignment via ProDy
         ensemble = Ensemble("Protein")
-        ensemble.setCoords(coords[0])
+        ensemble.setCoords(coords[0])  # Reference is frame 0
         ensemble.addCoordset(coords)
+        superpose(ensemble, ensemble)
+        aligned_coords = ensemble.getCoordsets()
 
-        # Aligning is crucial to remove global rotation/translation
-        try:
-            # ProDy's iterative superposition finds the average structure
-            from prody.measure import iterativeSuperpose
-
-            iterativeSuperpose(ensemble)
-        except ImportError:
-            # Fallback for version/import issues
-            from prody.measure import superpose
-
-            superpose(ensemble, ensemble)
-
-        # 3. FIX: Calculate Correlation directly from the aligned coordinates
-        # This avoids the "TypeError: modes must be a Mode..." error
-        # because we are passing the numerical coordinate sets.
-        aligned_coords = ensemble.getCoordsets()  # Shape (n_frames, n_atoms, 3)
-
-        # Calculate mean structure
+        # 3. Fluctuation Calculation
         mean_coords = aligned_coords.mean(axis=0)
-
-        # Calculate fluctuations (ΔR = R - <R>)
         fluctuations = aligned_coords - mean_coords
 
-        # Compute the dot products for the cross-correlation matrix
-        # C_ij = <ΔRi · ΔRj> / sqrt(<ΔRi^2> * <ΔRj^2>)
-        dccm = np.zeros((n_atoms, n_atoms))
+        # 4. Vectorized DCCM (The Fast Way)
+        # Resulting shape: (n_atoms, n_atoms)
+        dot_products = np.einsum("fai,fbi->ab", fluctuations, fluctuations) / n_frames
 
-        # Vectorized variance calculation for normalization
-        # variances shape: (n_atoms,)
-        variances = np.mean(np.sum(fluctuations**2, axis=2), axis=0)
-        norm_factor = np.sqrt(variances) + 1e-12  # Avoid division by zero
-
-        for i in range(n_atoms):
-            # Calculate dot product across all frames for atom i and all atoms j
-            # (n_frames, 3) dot (n_frames, n_atoms, 3)
-            dot_products = np.mean(
-                np.sum(fluctuations[:, i : i + 1, :] * fluctuations, axis=2), axis=0
-            )
-            dccm[i, :] = dot_products / (norm_factor[i] * norm_factor)
+        # 5. Normalization (C_ij = <ΔRi·ΔRj> / sqrt(<ΔRi²><ΔRj²>))
+        variances = np.diag(dot_products)
+        # Using outer product to create the denominator matrix
+        norm_matrix = np.sqrt(np.outer(variances, variances)) + 1e-12
+        dccm = dot_products / norm_matrix
 
         return dccm
 
@@ -339,9 +323,9 @@ class ProteinAnalyzer:
         n_ca = len(ca)
         sum_sq_dist = np.zeros((n_ca, n_ca))
         sum_dist = np.zeros((n_ca, n_ca))
-        n_frames = len(self.u.trajectory)
+        n_frames = len(self.md_analysis_u.trajectory)
 
-        for ts in self.u.trajectory:
+        for ts in self.md_analysis_u.trajectory:
             d = distances.distance_array(ca.positions, ca.positions)
             sum_dist += d
             sum_sq_dist += d**2
@@ -359,11 +343,11 @@ class ProteinAnalyzer:
         n_res = len(ca)
         contact_sum = np.zeros((n_res, n_res))
 
-        for ts in self.u.trajectory:
+        for ts in self.md_analysis_u.trajectory:
             d = distances.distance_array(ca.positions, ca.positions)
             contact_sum += (d < cutoff).astype(int)
 
-        return contact_sum / len(self.u.trajectory)
+        return contact_sum / len(self.md_analysis_u.trajectory)
 
     # --- SOLVENT-SOLUTE ---
 

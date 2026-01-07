@@ -15,7 +15,6 @@ def analyzer():
 def test_initialization(analyzer):
     """Check if the universe and protein size are loaded correctly."""
     assert analyzer.protein_size > 0
-    assert hasattr(analyzer, "u")
 
 
 def test_end_to_end_distance_shape(analyzer):
@@ -23,14 +22,14 @@ def test_end_to_end_distance_shape(analyzer):
     distances = analyzer.compute_end_to_end_distance()
 
     assert isinstance(distances, np.ndarray)
-    assert len(distances) == len(analyzer.u.trajectory)
+    assert len(distances) == len(analyzer.md_analysis_u.trajectory)
     # Distances in biology shouldn't be negative
     assert np.all(distances > 0)
 
 
 def test_gyration(analyzer):
     results = analyzer.compute_gyration_tensor_properties()
-    n_frames = len(analyzer.u.trajectory)
+    n_frames = len(analyzer.md_analysis_u.trajectory)
 
     for key, value in results.items():
         # 1. Check consistency and type
@@ -150,11 +149,43 @@ def test_dihedrals_and_entropy(analyzer):
 def test_dccm(analyzer):
     matrix = analyzer.compute_dccm()
     n_res = analyzer.protein_size
-    # ProDy DCCM might be based on atoms or residues depending on selection
-    assert matrix.ndim == 2
-    assert matrix.shape[0] == matrix.shape[1]
-    # Correlation diagonal should be 1.0
-    assert np.isclose(matrix[0, 0], 1.0)
+
+    # 1. Dimensionality and Shape
+    assert isinstance(matrix, np.ndarray), "Result must be a numpy array."
+    assert matrix.ndim == 2, "DCCM must be a 2D matrix."
+    assert matrix.shape == (
+        n_res,
+        n_res,
+    ), f"Shape {matrix.shape} mismatch with protein size {n_res}."
+
+    # 2. Symmetry Check
+    # In a correlation matrix, C_ij must equal C_ji
+    assert np.allclose(matrix, matrix.T, atol=1e-7), "Matrix is not symmetric."
+
+    # 3. Correlation Bounds
+    # Correlations must strictly fall within [-1.0, 1.0]
+    assert np.all(matrix >= -1.0 - 1e-9), "Found values less than -1.0."
+    assert np.all(matrix <= 1.0 + 1e-9), "Found values greater than 1.0."
+
+    # 4. Diagonal Integrity
+    # Every residue/atom is 100% correlated with itself.
+    # We check the entire diagonal, not just [0,0].
+    diagonal = np.diag(matrix)
+    assert np.allclose(diagonal, 1.0), "Not all diagonal elements are 1.0."
+
+    # 5. NaN Check
+    # If an atom doesn't move, the denominator (variance) is zero, leading to NaNs.
+    assert not np.isnan(
+        matrix
+    ).any(), "DCCM contains NaN values. Check for static atoms."
+
+    # 6. Physical Sanity (Variation)
+    # If the matrix is an identity matrix (all zeros except diagonal),
+    # it means no residues are moving in coordination.
+    off_diagonal = matrix[~np.eye(matrix.shape[0], dtype=bool)]
+    assert not np.allclose(
+        off_diagonal, 0
+    ), "No cross-correlation detected; check if frames are identical."
 
 
 def test_distance_fluctuations(analyzer):
