@@ -8,7 +8,6 @@ from idpmdp.analysis.global_metrics import (
     compute_scaling_exponent,
 )
 from idpmdp.analysis.residue_level_metrics import (
-    compute_residue_entropy,
     compute_residue_sasa,
     compute_secondary_structure_propensities,
     pooled_dihedral_entropy,
@@ -103,9 +102,7 @@ class ProteinAnalyzer:
 
         results["dccm"] = compute_dccm(self.md_analysis_u, self.protein_atoms)
         results.update(pooled_dihedral_entropy(self.md_traj, bins=60))
-        results["residue_entropy"] = compute_residue_entropy(
-            self.md_analysis_u, self.protein_atoms, temperature=300
-        )
+
         results["distance_fluctuations"] = compute_distance_fluctuations(
             self.md_analysis_u, self.protein_atoms
         )

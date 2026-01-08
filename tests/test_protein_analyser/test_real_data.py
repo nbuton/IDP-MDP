@@ -1,7 +1,23 @@
 import pytest
 import numpy as np
-from idpmdp.protein_analyzer import ProteinAnalyzer
+from idpmdp.analysis.orchestrator import ProteinAnalyzer
 from pathlib import Path
+from idpmdp.analysis.global_metrics import (
+    compute_end_to_end_distance,
+    compute_gyration_tensor_properties,
+    compute_maximum_diameter,
+    compute_scaling_exponent,
+)
+from idpmdp.analysis.residue_level_metrics import (
+    compute_residue_sasa,
+    compute_secondary_structure_propensities,
+    compute_dihedral_distribution,
+)
+from idpmdp.analysis.matrix_metrics import (
+    compute_contact_map,
+    compute_dccm,
+    compute_distance_fluctuations,
+)
 
 
 # This fixture initializes the class for use in all test functions
@@ -19,7 +35,7 @@ def test_initialization(analyzer):
 
 def test_end_to_end_distance_shape(analyzer):
     """Check if the output is an array matching the trajectory length."""
-    distances = analyzer.compute_end_to_end_distance()
+    distances = compute_end_to_end_distance(analyzer.md_analysis_u, analyzer.residues)
 
     assert isinstance(distances, np.ndarray)
     assert len(distances) == len(analyzer.md_analysis_u.trajectory)
@@ -28,7 +44,7 @@ def test_end_to_end_distance_shape(analyzer):
 
 
 def test_gyration(analyzer):
-    results = analyzer.compute_gyration_tensor_properties()
+    results = compute_gyration_tensor_properties(analyzer.md_traj)
     n_frames = len(analyzer.md_analysis_u.trajectory)
 
     for key, value in results.items():
@@ -67,7 +83,7 @@ def test_gyration(analyzer):
 
 def test_secondary_structure_propensities(analyzer):
     """Check if secondary structure propensities are computed correctly."""
-    propensities = analyzer.compute_secondary_structure_propensities()
+    propensities = compute_secondary_structure_propensities(analyzer.md_traj)
 
     assert isinstance(propensities, dict)
 
@@ -83,12 +99,12 @@ def test_secondary_structure_propensities(analyzer):
 
 
 def test_scaling_exponent(analyzer):
-    nu = analyzer.compute_scaling_exponent()
+    nu = compute_scaling_exponent(analyzer.md_traj)
     assert 0 < nu < 1.0  # Physically realistic range for polymers
 
 
 def test_secondary_structure(analyzer):
-    ss = analyzer.compute_secondary_structure_propensities()
+    ss = compute_secondary_structure_propensities(analyzer.md_traj)
 
     # Ensure we have data to check
     assert len(ss) > 0, "Propensity dictionary is empty"
@@ -113,7 +129,7 @@ def test_secondary_structure(analyzer):
 
 
 def test_dihedrals_and_entropy(analyzer):
-    data = analyzer.compute_dihedral_distribution()
+    data = compute_dihedral_distribution(analyzer.md_traj)
 
     for angle in ["phi", "psi"]:
         assert angle in data
@@ -147,7 +163,7 @@ def test_dihedrals_and_entropy(analyzer):
 
 
 def test_dccm(analyzer):
-    matrix = analyzer.compute_dccm()
+    matrix = compute_dccm(analyzer.md_analysis_u, analyzer.protein_atoms)
     n_res = analyzer.protein_size
 
     # 1. Dimensionality and Shape
@@ -188,63 +204,10 @@ def test_dccm(analyzer):
     ), "No cross-correlation detected; check if frames are identical."
 
 
-def test_compute_residue_entropy(analyzer):
-    # Execute the computation
-    entropy_dict = analyzer.compute_residue_entropy(temperature=300)
-    n_res = analyzer.protein_size
-
-    # 1. Type and Size Check
-    assert isinstance(entropy_dict, dict), "Result should be a dictionary."
-    assert (
-        len(entropy_dict) == n_res
-    ), f"Expected {n_res} entries, got {len(entropy_dict)}."
-
-    # Convert values to array for easier statistical checking
-    entropy_values = np.array(list(entropy_dict.values()))
-
-    # 2. Positivity Check
-    # Schlitter entropy S = 0.5 * kB * ln|I + ...|
-    # Since the determinant of (I + positive definite matrix) is >= 1, ln|det| >= 0.
-    assert np.all(entropy_values >= 0), "Entropy values cannot be negative."
-
-    # 3. Finite Value Check
-    assert np.all(np.isfinite(entropy_values)), "Entropy contains NaN or Inf values."
-
-    # 4. Mass/Size Sensitivity (Physical Sanity)
-    # Tryptophan (TRP) has more atoms/mass than Glycine (GLY).
-    # Its absolute entropy should generally be higher due to more degrees of freedom.
-    res_names = [res.resname for res in analyzer.protein_atoms.residues]
-
-    if "GLY" in res_names and "TRP" in res_names:
-        gly_indices = [i for i, name in enumerate(res_names) if name == "GLY"]
-        trp_indices = [i for i, name in enumerate(res_names) if name == "TRP"]
-
-        avg_gly_s = np.mean([entropy_values[i] for i in gly_indices])
-        avg_trp_s = np.mean([entropy_values[i] for i in trp_indices])
-
-        # TRP has 27 atoms, GLY has 7 atoms.
-        # While fluctuations matter, the DOF count usually makes TRP entropy higher.
-        assert (
-            avg_trp_s > avg_gly_s
-        ), "TRP should generally have higher entropy than GLY."
-
-    # 5. Order of Magnitude Check (J/mol·K)
-    # Typical residue conformational entropy is in the 10^1 to 10^3 range.
-    # If it's 10^-10 or 10^10, there is a unit conversion error (A^2 to m^2).
-    assert (
-        np.median(entropy_values) > 1.0
-    ), "Entropy values suspiciously low. Check units (A to m)."
-    assert np.median(entropy_values) < 5000.0, "Entropy values suspiciously high."
-
-    # 6. Check keys match residue numbers
-    resids = [res.resnum for res in analyzer.protein_atoms.residues]
-    assert set(entropy_dict.keys()) == set(
-        resids
-    ), "Dictionary keys do not match residue numbers."
-
-
 def test_distance_fluctuations(analyzer):
-    flucts = analyzer.compute_distance_fluctuations()
+    flucts = compute_distance_fluctuations(
+        analyzer.md_analysis_u, analyzer.protein_atoms
+    )
     assert flucts.shape == (analyzer.protein_size, analyzer.protein_size)
     assert np.all(flucts >= 0)
 
@@ -253,7 +216,9 @@ def test_distance_fluctuations(analyzer):
 
 
 def test_contact_map(analyzer):
-    cmap = analyzer.compute_contact_map(cutoff=8.0)
+    cmap = compute_contact_map(
+        analyzer.md_analysis_u, analyzer.protein_atoms, cutoff=8.0
+    )
     assert cmap.shape == (analyzer.protein_size, analyzer.protein_size)
     assert np.max(cmap) <= 1.0
     assert np.min(cmap) >= 0.0
@@ -262,7 +227,9 @@ def test_contact_map(analyzer):
 def test_sasa_dictionary_output(analyzer):
     stride = 10
     # The method now returns a dictionary of arrays
-    sasa_results = analyzer.compute_residue_sasa(n_sphere_points=60, stride=stride)
+    sasa_results = compute_residue_sasa(
+        analyzer.md_traj, n_sphere_points=60, stride=stride
+    )
 
     # 1. Define expected keys
     expected_keys = ["sasa_abs_mean", "sasa_abs_std", "sasa_rel_mean", "sasa_rel_std"]

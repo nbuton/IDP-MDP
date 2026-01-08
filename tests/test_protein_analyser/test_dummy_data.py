@@ -1,8 +1,11 @@
 import pytest
 import numpy as np
-from idpmdp.protein_analyzer import ProteinAnalyzer
+from idpmdp.analysis.orchestrator import ProteinAnalyzer
 import MDAnalysis as mda
 from tests.utils import write_dummy_files
+from idpmdp.analysis.global_metrics import (
+    compute_end_to_end_distance,
+)
 
 
 def create_dummy_protein(ca1_coords, ca2_coords):
@@ -89,7 +92,7 @@ def test_end_to_end_distance(ca1, ca2, expected_dist, tmp_path):
         pdb_path, xtc_path = write_dummy_files(u, iteration_dir)
 
         analyzer = ProteinAnalyzer(pdb_path, xtc_path)
-        dist = analyzer.compute_end_to_end_distance()
+        dist = compute_end_to_end_distance(analyzer.md_analysis_u, analyzer.residues)
 
         # Assert with floating point tolerance
         assert dist == pytest.approx(expected_dist, rel=1e-5)
