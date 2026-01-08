@@ -1,0 +1,240 @@
+import mdtraj as md
+import numpy as np
+
+
+def compute_secondary_structure_propensities(md_traj):
+    """
+    Computes the SS8 (DSSP) propensity of each secondary structure element
+    per residue over the trajectory using MDTraj.
+    """
+    traj = md_traj.atom_slice(md_traj.top.select("protein"))
+
+    # 2. Compute DSSP with full 8-class output
+    # Output shape: (n_frames, n_residues)
+    dssp = md.compute_dssp(traj, simplified=False)
+
+    # 3. Map DSSP symbols to SS8 labels (space -> C)
+    mapping = {
+        "H": "H",  # alpha helix
+        "G": "G",  # 3-10 helix
+        "I": "I",  # pi helix
+        "E": "E",  # beta strand
+        "B": "B",  # beta bridge
+        "T": "T",  # turn
+        "S": "S",  # bend
+        " ": "C",  # coil
+    }
+
+    ss8_labels = ["H", "G", "I", "E", "B", "T", "S", "C"]
+    n_frames, n_residues = dssp.shape
+
+    # 4. Compute per-residue propensities
+    propensities = {k: np.zeros(n_residues) for k in ss8_labels}
+
+    for f in range(n_frames):
+        for i, code in enumerate(dssp[f]):
+            propensities[mapping[code]][i] += 1
+
+    # Normalize by number of frames
+    for k in propensities:
+        propensities[k] /= n_frames
+
+    # 5. Sanity check on residue indexing (as in your original code)
+    resids = np.array([res.resSeq for res in traj.topology.residues])
+    assert np.all(
+        np.diff(resids) > 0
+    ), "Residues are not in order or contain duplicates!"
+    assert np.all(np.diff(resids) == 1), f"Gap detected in residue sequence: {resids}"
+
+    return {f"ss_propensity_{k}": v for k, v in propensities.items()}
+
+
+def compute_dihedral_distribution(md_traj):
+    """Uses MDTraj to compute Dihedrals and X-Entropy for S_conf."""
+
+    phi_indices, phi_angles = md.compute_phi(md_traj)
+    psi_indices, psi_angles = md.compute_psi(md_traj)
+
+    n_frames = md_traj.n_frames
+    n_residues = md_traj.topology.n_residues  # Total length L
+
+    # 2. Initialize full-sized arrays filled with NaNs
+    # Shape: (n_frames, n_residues)
+    full_phi = np.full((n_frames, n_residues), np.nan)
+    full_psi = np.full((n_frames, n_residues), np.nan)
+
+    # 3. Place the computed angles into the correct positions
+    # Phi starts at residue 1 (skips 0)
+    full_phi[:, 1:] = phi_angles
+
+    # Psi ends at residue L-2 (skips L-1)
+    full_psi[:, :-1] = psi_angles
+
+    return {"phi": full_phi, "psi": full_psi}
+
+
+def pooled_dihedral_entropy(md_traj, bins=60):
+    """
+    phi_array: shape (n_frames, n_residues)
+    psi_array: shape (n_frames, n_residues)
+    """
+    results = compute_dihedral_distribution(md_traj)
+    phi_array = results["phi"]
+    psi_array = results["psi"]
+
+    n_frames, n_res = phi_array.shape
+    pooled_entropy = {"phi_dihedrals_entropy": [], "psi_dihedrals_entropy": []}
+
+    for i in range(n_res):
+        # Process PHI for residue i
+        phi_counts, _ = np.histogram(phi_array[:, i], bins=bins, range=[-np.pi, np.pi])
+        p_phi = phi_counts / n_frames
+        p_phi = p_phi[p_phi > 0]  # Remove zeros to avoid log(0)
+        s_phi = -np.sum(p_phi * np.log(p_phi))
+
+        # Process PSI for residue i
+        psi_counts, _ = np.histogram(psi_array[:, i], bins=bins, range=[-np.pi, np.pi])
+        p_psi = psi_counts / n_frames
+        p_psi = p_psi[p_psi > 0]
+        s_psi = -np.sum(p_psi * np.log(p_psi))
+
+        pooled_entropy["phi_dihedrals_entropy"].append(s_phi)
+        pooled_entropy["psi_dihedrals_entropy"].append(s_psi)
+
+    pooled_entropy["phi_dihedrals_entropy"] = np.array(
+        pooled_entropy["phi_dihedrals_entropy"]
+    )
+    pooled_entropy["psi_dihedrals_entropy"] = np.array(
+        pooled_entropy["psi_dihedrals_entropy"]
+    )
+    return pooled_entropy
+
+
+def compute_residue_sasa(md_traj, n_sphere_points, stride):
+    """
+    Returns a 1D numpy array of time-averaged SASA values
+    in the order of the protein sequence.
+    """
+    # MaxASA values in nm^2 (Tien et al. 2013)
+    TIEN_MAX_SASA = {
+        "ALA": 1.21,
+        "ARG": 2.48,
+        "ASN": 1.87,
+        "ASP": 1.87,
+        "CYS": 1.48,
+        "GLN": 2.14,
+        "GLU": 2.14,
+        "GLY": 0.97,
+        "HIS": 2.16,
+        "ILE": 1.95,
+        "LEU": 1.91,
+        "LYS": 2.30,
+        "MET": 2.03,
+        "PHE": 2.28,
+        "PRO": 1.54,
+        "SER": 1.43,
+        "THR": 1.63,
+        "TRP": 2.64,
+        "TYR": 2.55,
+        "VAL": 1.65,
+    }
+
+    # Select only the protein (standard practice to avoid membrane/solvent interference)
+    protein_indices = md_traj.topology.select("protein")
+    t_prot = md_traj.atom_slice(protein_indices)
+
+    # Compute SASA per residue
+    # Returns shape (n_frames, n_residues)
+    sasa_per_frame_per_res = md.shrake_rupley(
+        t_prot, n_sphere_points=n_sphere_points, mode="residue"
+    )
+    # Calculate Mean (Average) and Std (Fluctuations) for both metrics
+    # Absolute SASA (nm^2)
+    avg_abs_sasa = np.mean(sasa_per_frame_per_res, axis=0)
+    std_abs_sasa = np.std(sasa_per_frame_per_res, axis=0)
+
+    # Compute Relative Solvent Accessibility (RSA)
+    residue_names = [res.name[:3].upper() for res in t_prot.topology.residues]
+    max_vals = np.array([TIEN_MAX_SASA.get(name, 1.0) for name in residue_names])
+
+    # This divides every frame's SASA by the MaxSASA for that residue type
+    rsa_per_frame = sasa_per_frame_per_res / max_vals
+
+    # Relative SASA (RSA - normalized 0 to 1)
+    avg_rel_sasa = np.mean(rsa_per_frame, axis=0)
+    std_rel_sasa = np.std(rsa_per_frame, axis=0)
+
+    return {
+        "sasa_abs_mean": avg_abs_sasa,  # Physical area (nm^2)
+        "sasa_abs_std": std_abs_sasa,  # Area fluctuations
+        "sasa_rel_mean": avg_rel_sasa,  # Normalized exposure (0-1)
+        "sasa_rel_std": std_rel_sasa,  # Relative flexibility
+    }
+
+
+def get_fluctuations_for_atoms(md_analysis_u, atom_group):
+    # Ensure trajectory is aligned before calling this
+    n_frames = len(md_analysis_u.trajectory)
+    coords = np.zeros((n_frames, len(atom_group), 3))
+
+    for i, ts in enumerate(md_analysis_u.trajectory):
+        coords[i] = atom_group.positions
+
+    mean_coords = coords.mean(axis=0)
+    return coords - mean_coords
+
+
+def compute_residue_entropy(md_analysis_u, protein_atoms, temperature=300):
+    # 1. Constants (SI Units)
+    kB = 1.380649e-23
+    hbar = 1.054571e-34
+    N_A = 6.02214076e23
+    R = kB * N_A
+    T = temperature
+
+    # Prefactor (~4.11e45 m^-2 kg^-1)
+    prefactor = (kB * T * np.exp(2)) / (hbar**2)
+    n_frames = len(md_analysis_u.trajectory)
+
+    res_entropy = {}
+
+    # 2. Iterate using enumerate to ensure dictionary length matches protein_size
+    for i, residue in enumerate(protein_atoms.residues):
+        res_atoms = residue.atoms
+
+        # 3. Mass Vector (3N components)
+        # Convert AMU to kg: 1 AMU = 1.660539e-27 kg
+        m_kg = np.array([a.mass * 1.660539e-27 for a in res_atoms for _ in range(3)])
+        m_half = np.sqrt(m_kg)
+
+        # 4. Fluctuations & Covariance
+        # get_fluctuations_for_atoms should return (n_frames, 3*N) centered coordinates
+        res_fluct = get_fluctuations_for_atoms(md_analysis_u, res_atoms).reshape(
+            n_frames, -1
+        )
+
+        # C = (X^T @ X) / n_frames. Convert Angstrom^2 to m^2 (1e-20)
+        cov_m2 = (np.dot(res_fluct.T, res_fluct) / n_frames) * 1e-20
+
+        # 5. Mass-Weighted Matrix (Symmetric)
+        # We need eigenvalues of (M * C). For stability, we use M^0.5 * C * M^0.5
+        # This uses broadcasting for (diag(m_half) @ cov @ diag(m_half))
+        weighted_cov = (cov_m2 * m_half).T * m_half
+
+        # 6. Solve for Eigenvalues
+        # eigvalsh is significantly more stable than slogdet for this purpose
+        evals = np.linalg.eigvalsh(weighted_cov)
+
+        # 7. Apply Schlitter Formula via summation
+        # Filter: Ignore eigenvalues < 1e-40 (alignment/noise) to prevent log(1) only
+        significant_evals = evals[evals > 1e-40]
+
+        if len(significant_evals) > 0:
+            # S = 0.5 * R * sum(ln(1 + prefactor * lambda_i))
+            # Summing logs is the "gold standard" to prevent underflow/overflow
+            s_res = 0.5 * R * np.sum(np.log(1 + (prefactor * significant_evals)))
+            res_entropy[i] = s_res
+        else:
+            res_entropy[i] = 0.0
+
+    return res_entropy

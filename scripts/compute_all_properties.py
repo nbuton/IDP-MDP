@@ -1,8 +1,7 @@
 from joblib import Parallel, delayed
-import os
 from idpmdp.utils import get_pdb_directories
-from idpmdp.protein_analyzer import ProteinAnalyzer
-from pathlib import Path
+from idpmdp.analysis.orchestrator import ProteinAnalyzer
+from idpmdp.analysis.io_utils import save_all_properties
 
 
 def compute_all_for_one_protein(directory_path):
@@ -21,7 +20,7 @@ def compute_all_for_one_protein(directory_path):
         contact_cutoff=8.0,
         scaling_min_sep=5,
     )
-    analyzer.save_all(results, output_folder=directory_path)
+    save_all_properties(results, output_folder=directory_path)
     return f"Successfully processed {directory_path.name}"
 
 
