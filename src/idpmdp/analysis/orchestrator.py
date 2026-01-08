@@ -11,6 +11,7 @@ from idpmdp.analysis.residue_level_metrics import (
     compute_residue_sasa,
     compute_secondary_structure_propensities,
     pooled_dihedral_entropy,
+    compute_local_chirality,
 )
 from idpmdp.analysis.matrix_metrics import (
     compute_contact_map,
@@ -98,6 +99,7 @@ class ProteinAnalyzer:
             self.md_traj, min_sep=scaling_min_sep
         )
 
+        results["local_chirality"] = compute_local_chirality(self.md_traj)
         results.update(compute_secondary_structure_propensities(self.md_traj))
 
         results["dccm"] = compute_dccm(self.md_analysis_u, self.protein_atoms)

@@ -12,6 +12,7 @@ from idpmdp.analysis.residue_level_metrics import (
     compute_residue_sasa,
     compute_secondary_structure_propensities,
     compute_dihedral_distribution,
+    compute_local_chirality,
 )
 from idpmdp.analysis.matrix_metrics import (
     compute_contact_map,
@@ -210,6 +211,39 @@ def test_distance_fluctuations(analyzer):
     )
     assert flucts.shape == (analyzer.protein_size, analyzer.protein_size)
     assert np.all(flucts >= 0)
+
+
+def test_local_chirality(analyzer):
+    """Test compute_local_chirality on MDTraj trajectory."""
+    traj = analyzer.md_traj
+    n_res = analyzer.protein_size
+
+    # Compute chirality metrics
+    chirality = compute_local_chirality(traj)
+
+    # Shape: (n_residues-3, 2) for valid interior residues
+    expected_n_valid = max(0, n_res - 3)
+    assert chirality.shape == (
+        expected_n_valid,
+        2,
+    ), f"Expected shape ({expected_n_valid}, 2), got {chirality.shape}"
+
+    # Columns: [mean, std]; std >= 0, mean can be positive/negative
+    mean_chi, std_chi = chirality[:, 0], chirality[:, 1]
+    assert np.all(std_chi >= 0), "Standard deviations must be non-negative"
+    assert np.all(np.isfinite(chirality)), "All values must be finite"
+
+    # Numerical stability: std not NaN/inf for reasonable trajectories
+    assert np.all(std_chi <= np.inf), "Std values must be finite"
+
+    # For IDP-like systems, expect some variance > 1e-3 (non-trivial dynamics)
+    if expected_n_valid > 0:
+        assert np.any(std_chi > 1e-3), "Expect some dynamic residues in test system"
+
+    # Optional: Check against trivial zero trajectory
+    trivial_traj = traj[0:1]  # Single static frame
+    static_chirality = compute_local_chirality(trivial_traj)
+    assert np.allclose(static_chirality[:, 1], 0.0), "Static frame should have zero std"
 
 
 # --- Geometric & Solvent Tests ---

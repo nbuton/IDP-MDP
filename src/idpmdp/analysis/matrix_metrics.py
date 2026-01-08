@@ -23,19 +23,6 @@ def compute_distance_fluctuations(md_analysis_u, protein_atoms):
     return np.sqrt(np.maximum(variance, 0))  # Return Standard Deviation
 
 
-def compute_contact_map(md_analysis_u, protein_atoms, cutoff=8.0):
-    """Calculates average contact frequency matrix."""
-    ca = protein_atoms.select_atoms("name CA")
-    n_res = len(ca)
-    contact_sum = np.zeros((n_res, n_res))
-
-    for ts in md_analysis_u.trajectory:
-        d = distances.distance_array(ca.positions, ca.positions)
-        contact_sum += (d < cutoff).astype(int)
-
-    return contact_sum / len(md_analysis_u.trajectory)
-
-
 def compute_dccm(md_analysis_u, protein_atoms):
     ca = protein_atoms.select_atoms("name CA")
     n_frames = len(md_analysis_u.trajectory)
@@ -68,3 +55,16 @@ def compute_dccm(md_analysis_u, protein_atoms):
     dccm = dot_products / norm_matrix
 
     return dccm
+
+
+def compute_contact_map(md_analysis_u, protein_atoms, cutoff=8.0):
+    """Calculates average contact frequency matrix."""
+    ca = protein_atoms.select_atoms("name CA")
+    n_res = len(ca)
+    contact_sum = np.zeros((n_res, n_res))
+
+    for ts in md_analysis_u.trajectory:
+        d = distances.distance_array(ca.positions, ca.positions)
+        contact_sum += (d < cutoff).astype(int)
+
+    return contact_sum / len(md_analysis_u.trajectory)

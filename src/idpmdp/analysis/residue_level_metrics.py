@@ -110,6 +110,47 @@ def pooled_dihedral_entropy(md_traj, bins=60):
     return pooled_entropy
 
 
+def compute_local_chirality(md_traj):
+    """
+    Compute mean local chirality <χ_i> and std(χ_i) for all residues.
+    """
+    # 1. Correct way to get residue count
+    n_res = md_traj.topology.n_residues
+
+    # 2. Select C-alpha atom indices
+    calphas = md_traj.topology.select("name CA")
+
+    # Ensure we have enough residues to compute the scalar triple product
+    if n_res < 4:
+        raise ValueError(
+            "Trajectory must have at least 4 residues to compute local chirality."
+        )
+
+    # 3. Extract all C-alpha coordinates for all frames: shape (n_frames, n_ca, 3)
+    xyz = md_traj.xyz[:, calphas, :]
+
+    # 4. Vectorized calculation of v1, v2, v3 for all residues and frames
+    # v1: i-1 to i
+    # v2: i to i+1
+    # v3: i+1 to i+2
+    v1 = xyz[:, 1:-2, :] - xyz[:, 0:-3, :]
+    v2 = xyz[:, 2:-1, :] - xyz[:, 1:-2, :]
+    v3 = xyz[:, 3:, :] - xyz[:, 2:-1, :]
+
+    # 5. Compute scalar triple product: chi = v1 · (v2 × v3)
+    # np.cross handles the (n_frames, n_valid_res, 3) arrays perfectly
+    cross_v2_v3 = np.cross(v2, v3)
+    # Sum over the last axis (the 3D coordinates) to perform the dot product
+    chi_all = np.sum(v1 * cross_v2_v3, axis=2)
+
+    # 6. Compute statistics over frames (axis 0)
+    mean_chi = np.mean(chi_all, axis=0)
+    std_chi = np.std(chi_all, axis=0)
+
+    # Note: This returns values for residues index 1 to n_res-2
+    return np.column_stack([mean_chi, std_chi])
+
+
 def compute_residue_sasa(md_traj, n_sphere_points, stride):
     """
     Returns a 1D numpy array of time-averaged SASA values
