@@ -9,3 +9,4 @@ src/idpmdp/backmapping.py
 *.stderr
 *.stdout
 error_log.txt
+*.png
