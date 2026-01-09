@@ -78,9 +78,9 @@ def compute_gyration_tensor_properties(md_traj):
         results["gyration_eigenvalues_l1"].append(l1)
         results["gyration_eigenvalues_l2"].append(l2)
         results["gyration_eigenvalues_l3"].append(l3)
-        results["gyration_l1/l2"].append(l1 / l2 if l2 > 0 else 0)
-        results["gyration_l1/l3"].append(l1 / l3 if l3 > 0 else 0)
-        results["gyration_l2/l3"].append(l2 / l3 if l3 > 0 else 0)
+        results["gyration_l1_per_l2"].append(l1 / l2 if l2 > 0 else 0)
+        results["gyration_l1_per_l3"].append(l1 / l3 if l3 > 0 else 0)
+        results["gyration_l2_per_l3"].append(l2 / l3 if l3 > 0 else 0)
 
         rg2 = (
             l1 + l2 + l3
