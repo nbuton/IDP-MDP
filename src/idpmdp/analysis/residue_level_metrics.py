@@ -239,11 +239,13 @@ def compute_residue_sasa(md_traj, n_sphere_points):
         "VAL": 1.65,
     }
 
-    # Select only the protein (standard practice to avoid membrane/solvent interference)
     has_overlap, frame_idx = has_overlapping_atoms(md_traj)
-    if has_overlap:
+    if (
+        has_overlap
+    ):  # SASA will crash if two atoms are superposed and this can sometimes happen in some frame because of cg2all backmapping approximation
         md_traj = remove_problematic_frames(md_traj, frame_idx)
 
+    # Select only the protein (standard practice to avoid membrane/solvent interference)
     protein_indices = md_traj.topology.select("protein")
     t_prot = md_traj.atom_slice(protein_indices)
 

@@ -1,12 +1,8 @@
 import os
 import subprocess
-import numpy as np
 import mdtraj as md
-from openmm.app import PDBFile, ForceField, Simulation, PME, HBonds
-from openmm import LangevinMiddleIntegrator, Platform
-from openmm.unit import nanometer, picosecond, picoseconds, kelvin
 import time
-from utils import get_pdb_directories
+from idpmdp.utils import get_pdb_directories
 import logging
 
 
