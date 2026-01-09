@@ -44,13 +44,16 @@ Where:
 The gyration tensor is a $3 \times 3$ matrix that characterizes the shape and orientation of the protein.
 
 **Formula:**
-The elements $S_{mn}$ (where $m, n \in \{x, y, z\}$) of the tensor are calculated as:
+The elements $S_{mn}$ (where $m, n \in \{x, y, z\}$) of the tensor are calculated as:  
+
 $$S_{mn} = \frac{1}{N} \sum_{i=1}^{N} (r_{i,m} - r_{cm,m})(r_{i,n} - r_{cm,n})$$
 
 For the mass-weighted version:
+
 $$S_{mn} = \frac{\sum_{i=1}^{N} m_i (r_{i,m} - r_{cm,m})(r_{i,n} - r_{cm,n})}{\sum_{i=1}^{N} m_i}$$
 
 The matrix is symmetric:
+
 $$\mathbf{S} = \begin{pmatrix} S_{xx} & S_{xy} & S_{xz} \\ S_{yx} & S_{yy} & S_{yz} \\ S_{zx} & S_{zy} & S_{zz} \end{pmatrix}$$
 
 **Eigenvalues:**
@@ -71,6 +74,7 @@ Where:
 
 ### Prolateness ($S$)
 Determines if the shape is elongated like a cylinder (prolate, $S > 0$) or flattened like a disk (oblate, $S < 0$).
+
 $$S = \frac{(2\lambda_1 - \lambda_2 - \lambda_3)(2\lambda_2 - \lambda_1 - \lambda_3)(2\lambda_3 - \lambda_1 - \lambda_2)}{2(\lambda_1^2 + \lambda_2^2 + \lambda_3^2 - \lambda_1\lambda_2 - \lambda_1\lambda_3 - \lambda_2\lambda_3)^{3/2}}$$
 
 **Shape:** (N,)
@@ -100,6 +104,7 @@ $$R_g \approx R_0 L^\nu$$
 
 **Calculation via Linear Regression:**
 To compute $\nu$ from experimental or simulation data, a linear fit is performed on a log-log scale:
+
 $$\ln(R_g) = \nu \ln(L) + \text{constant}$$
 
 **Physical Interpretations:**
@@ -173,7 +178,8 @@ This is a primary tool for identifying allosteric pathways in proteins. In Intri
 
 ---
 ### Motion Correlation (DCCM) - TO REMOVE because comparaison with artificial mean not pertinent for IDP?
-The Dynamic Cross-Correlation Map (DCCM) represents the correlated displacements of $C_{\alpha}$ atoms.
+The Dynamic Cross-Correlation Map (DCCM) represents the correlated displacements of $C_{\alpha}$ atoms.  
+
 $$C_{ij} = \frac{\langle \Delta \mathbf{r}_i \cdot \Delta \mathbf{r}_j \rangle}{\sqrt{\langle \Delta \mathbf{r}_i^2 \rangle \langle \Delta \mathbf{r}_j^2 \rangle}}$$
 
 
@@ -195,13 +201,17 @@ The probability $P_{ij}$ that two residues $i$ and $j$ are within a specific spa
 Local chirality measures the geometric handedness of the polypeptide backbone. For each residue $i$, it is computed using a set of four consecutive $C_\alpha$ atoms to capture the local twist of the chain.
 
 **Mean Local Chirality ($\langle \chi_i \rangle$):**
-Captures the primary structural bias of the residue.
+Captures the primary structural bias of the residue.  
+
 $$\langle \chi_i \rangle = \frac{1}{T} \sum_{t=1}^{T} \left[ \mathbf{v}_{i-1,i} \cdot (\mathbf{v}_{i,i+1} \times \mathbf{v}_{i+1,i+2}) \right]$$
+
 * **Interpretation:** Positive values indicate a right-handed bias (alpha-helical tendency), while negative values indicate a left-handed bias.
 
 **Chirality Variance ($\sigma^2_{\chi, i}$):**
 Quantifies the stability of the local handedness.
+
 $$\sigma^2_{\chi, i} = \langle \chi_i^2 \rangle - \langle \chi_i \rangle^2$$
+
 * **Interpretation:** High variance indicates a residue that frequently interconverts between different chiral states, a common feature in highly disordered IDP regions.
 
 **Shape:** (L, 2)
@@ -212,13 +222,19 @@ $$\sigma^2_{\chi, i} = \langle \chi_i^2 \rangle - \langle \chi_i \rangle^2$$
 SASA measures the area of a residue's surface that is accessible to a solvent probe (radius $\approx 1.4$ Å). In IDPs, it is a key indicator of the "compactness" of the ensemble and the exposure of hydrophobic patches.
 
 **Mean SASA ($\langle \text{SASA}_i \rangle$):**
-Indicates the average degree of exposure of residue $i$ across the conformational ensemble.
-$$\langle \text{SASA}_i \rangle = \frac{1}{T} \sum_{t=1}^{T} \text{SASA}_i(t)$$
+
+Indicates the average degree of exposure of residue $i$ across the conformational ensemble.  
+
+$$ \langle \text{SASA}_i \rangle = \frac{1}{T} \sum_{t=1}^{T} \text{SASA}_i(t) $$
+
+
 * **Interpretation:** High values suggest the residue is highly disordered and solvated; low values suggest the residue is frequently buried in transient hydrophobic clusters or "globule-like" states.
 
 **SASA Variance ($\sigma^2_{\text{SASA}, i}$):**
 Measures the frequency of "burial-exposure" transitions.
+
 $$\sigma^2_{\text{SASA}, i} = \langle \text{SASA}_i^2 \rangle - \langle \text{SASA}_i \rangle^2$$
+
 * **Interpretation:** High variance identifies residues that act as "gatekeepers," moving between the core of a transiently collapsed IDP and the solvent-exposed surface.
 
 **Shape:** (L, 2)
