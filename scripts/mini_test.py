@@ -1,9 +1,9 @@
-from idpmdp.protein_analyzer import ProteinAnalyzer
+from idpmdp.analysis.orchestrator import ProteinAnalyzer
 import numpy as np
 import time
 import logging
 from pathlib import Path
-import numpy as np
+from idpmdp.analysis.io_utils import save_all_properties
 
 
 def count_total_floats(data):
@@ -67,7 +67,9 @@ if __name__ == "__main__":
     # Test IDRome
     print("Analysing ensemble from IDRome")
     start_time = time.time()
-    IDP_folder = Path("data/IDRome/IDRome_v4/Q5/T7/B8/541_1292/")
+    IDP_folder = Path(
+        "./data/IDRome/IDRome_v4/Q5/SY/C1/270_327"
+    )  # 58 residues: ./data/IDRome/IDRome_v4/Q5/SY/C1/270_327 / 1485 residues: "./data/IDRome/IDRome_v4/Q5/JP/B2/193_1677"
     pdb_path = Path(IDP_folder / "top_AA.pdb")
     xtc_path = Path(IDP_folder / "traj_AA.xtc")
     analyzer = ProteinAnalyzer(pdb_path, xtc_path)
@@ -77,7 +79,7 @@ if __name__ == "__main__":
         contact_cutoff=8.0,
         scaling_min_sep=5,
     )
-    analyzer.save_all(results, output_folder=IDP_folder)
+    save_all_properties(results, output_folder=IDP_folder)
     print_results(results)
     print("dccm:", results["dccm"][:5, :5])
     print("distance_fluctuations:", results["distance_fluctuations"][:5, :5])
@@ -96,8 +98,6 @@ if __name__ == "__main__":
     results = analyzer.compute_all(
         sasa_n_sphere=250,
         sasa_stride=10,
-        hydration_bins=50,
-        hydration_rmax=30.0,
         contact_cutoff=8.0,
         scaling_min_sep=5,
     )
