@@ -5,7 +5,7 @@ Tool to create the DynaFold Benchmark
 
 
 
-## 🚀 Pipeline Execution Guide
+## Pipeline Execution Guide
 
 Follow these steps in order to download the data, process the conformations, and generate the final benchmark dataset.
 
