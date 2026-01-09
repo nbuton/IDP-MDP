@@ -55,7 +55,8 @@ def unify_idrome_to_h5(root_dir, path_output_h5):
                                 key, data=data, compression="gzip", compression_opts=4
                             )
                     else:
-                        raise ValueError("Not correct object type")
+                        print("Not ok")
+                        # raise ValueError("Not correct object type")
 
     print(f"Success! Unified data saved to {path_output_h5}")
 
