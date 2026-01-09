@@ -75,7 +75,6 @@ if __name__ == "__main__":
     analyzer = ProteinAnalyzer(pdb_path, xtc_path)
     results = analyzer.compute_all(
         sasa_n_sphere=100,  # 960
-        sasa_stride=10,  # 1
         contact_cutoff=8.0,
         scaling_min_sep=5,
     )
@@ -97,7 +96,6 @@ if __name__ == "__main__":
     analyzer = ProteinAnalyzer(pdb_path)
     results = analyzer.compute_all(
         sasa_n_sphere=250,
-        sasa_stride=10,
         contact_cutoff=8.0,
         scaling_min_sep=5,
     )

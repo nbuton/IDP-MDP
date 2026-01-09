@@ -259,11 +259,8 @@ def test_contact_map(analyzer):
 
 
 def test_sasa_dictionary_output(analyzer):
-    stride = 10
     # The method now returns a dictionary of arrays
-    sasa_results = compute_residue_sasa(
-        analyzer.md_traj, n_sphere_points=60, stride=stride
-    )
+    sasa_results = compute_residue_sasa(analyzer.md_traj, n_sphere_points=60)
 
     # 1. Define expected keys
     expected_keys = ["sasa_abs_mean", "sasa_abs_std", "sasa_rel_mean", "sasa_rel_std"]

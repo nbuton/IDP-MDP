@@ -17,7 +17,6 @@ def compute_all_for_one_protein(directory_path):
         analyzer = ProteinAnalyzer(pdb_path, xtc_path)
         results = analyzer.compute_all(
             sasa_n_sphere=960,
-            sasa_stride=1,
             contact_cutoff=8.0,
             scaling_min_sep=5,
         )

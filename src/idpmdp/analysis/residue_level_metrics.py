@@ -1,5 +1,64 @@
 import mdtraj as md
 import numpy as np
+from scipy.spatial import cKDTree
+
+
+def has_overlapping_atoms(traj, threshold=0.001):
+    """
+    Checks all frames in an MDTraj object for overlapping atoms.
+    threshold is in nanometers (default 0.001 nm = 0.01 Angstrom).
+    """
+    if traj.n_atoms < 2:
+        return False
+
+    # Iterate through frames
+    for i in range(traj.n_frames):
+        coords = traj.xyz[i]
+
+        # Build tree for the current frame
+        tree = cKDTree(coords)
+
+        # query_pairs is very fast (written in C++)
+        pairs = tree.query_pairs(r=threshold)
+
+        if len(pairs) > 0:
+            # We found a clash in at least one frame
+            # Returning the frame index can help with debugging
+            return True, i
+
+    return False, None
+
+
+def remove_problematic_frames(traj, frame_idx):
+    """
+    Removes specific frames from an md.Trajectory object.
+
+    Parameters:
+    - traj: The md.Trajectory object.
+    - frame_idx: An integer or a list/set of integers representing the frames to remove.
+
+    Returns:
+    - A new md.Trajectory object without the problematic frames.
+    """
+    # Ensure frame_idx is a set for fast lookup and to handle single integers
+    if isinstance(frame_idx, (int, np.integer)):
+        to_remove = {frame_idx}
+    else:
+        to_remove = set(frame_idx)
+
+    # Create a list of all frame indices EXCEPT those in the remove set
+    all_indices = np.arange(traj.n_frames)
+    keep_indices = [i for i in all_indices if i not in to_remove]
+
+    if not keep_indices:
+        print(f"Warning: Removing frames {to_remove} left the trajectory empty!")
+        return None
+
+    # Use MDTraj's built-in slicing to create the new trajectory
+    # This is highly optimized and preserves topology
+    clean_traj = traj[keep_indices]
+
+    return clean_traj
 
 
 def compute_secondary_structure_propensities(md_traj):
@@ -151,7 +210,7 @@ def compute_local_chirality(md_traj):
     return np.column_stack([mean_chi, std_chi])
 
 
-def compute_residue_sasa(md_traj, n_sphere_points, stride):
+def compute_residue_sasa(md_traj, n_sphere_points):
     """
     Returns a 1D numpy array of time-averaged SASA values
     in the order of the protein sequence.
@@ -181,6 +240,10 @@ def compute_residue_sasa(md_traj, n_sphere_points, stride):
     }
 
     # Select only the protein (standard practice to avoid membrane/solvent interference)
+    has_overlap, frame_idx = has_overlapping_atoms(md_traj)
+    if has_overlap:
+        md_traj = remove_problematic_frames(md_traj, frame_idx)
+
     protein_indices = md_traj.topology.select("protein")
     t_prot = md_traj.atom_slice(protein_indices)
 
@@ -189,6 +252,7 @@ def compute_residue_sasa(md_traj, n_sphere_points, stride):
     sasa_per_frame_per_res = md.shrake_rupley(
         t_prot, n_sphere_points=n_sphere_points, mode="residue"
     )
+
     # Calculate Mean (Average) and Std (Fluctuations) for both metrics
     # Absolute SASA (nm^2)
     avg_abs_sasa = np.mean(sasa_per_frame_per_res, axis=0)

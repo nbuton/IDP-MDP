@@ -70,7 +70,6 @@ class ProteinAnalyzer:
     def compute_all(
         self,
         sasa_n_sphere=960,
-        sasa_stride=1,
         scaling_min_sep=5,
         contact_cutoff=8.0,
     ):
@@ -113,9 +112,7 @@ class ProteinAnalyzer:
         )
 
         results.update(
-            compute_residue_sasa(
-                self.md_traj, n_sphere_points=sasa_n_sphere, stride=sasa_stride
-            )
+            compute_residue_sasa(self.md_traj, n_sphere_points=sasa_n_sphere)
         )
 
         return results
