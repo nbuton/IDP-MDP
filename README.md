@@ -4,11 +4,46 @@ Tool to create the DynaFold Benchmark
 **Objective:** Evaluate model that predict conformational set properties directly from sequence
 
 
-## Pipeline
-1- Download data from IDRome (https://github.com/KULL-Centre/_2023_Tesei_IDRome?tab=readme-ov-file) and put this inside the data folder  
-2- Run pipeline/compute_all_backmapping.py to do the backmapping and have the full atom version for the 28058 IDPs of IDRome  
-3- Run pipeline/compute_all_properties.py to compute all properties from conformation set of each IDP  
-4- Run python3 pipeline/split_and_create_dataset.py to create train/validation/test splits to have the final benchmark  
+
+## 🚀 Pipeline Execution Guide
+
+Follow these steps in order to download the data, process the conformations, and generate the final benchmark dataset.
+
+### 1. Data Acquisition
+
+First, download the IDRome dataset and place the contents into your local `data/` directory.
+
+* **Source:** [IDRome GitHub Repository](https://github.com/KULL-Centre/_2023_Tesei_IDRome)
+
+### 2. Backmapping
+
+Convert the coarse-grained representations into full-atom versions for all 28,058 intrinsically disordered proteins (IDPs).
+
+```bash
+python3 pipeline/compute_all_backmapping.py
+
+```
+
+### 3. Feature Extraction
+
+Compute the physical and structural properties from the conformation set of each IDP.
+
+```bash
+python3 pipeline/compute_all_properties.py
+
+```
+
+### 4. Dataset Generation
+
+Split the processed data into training, validation, and test sets to create the final benchmark.
+
+```bash
+python3 pipeline/split_and_create_dataset.py
+
+```
+
+---
+
 
 ## Computed properties
 L: length of the proteins  
