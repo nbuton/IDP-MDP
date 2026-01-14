@@ -98,6 +98,7 @@ class ProteinAnalyzer:
             self.md_traj, min_sep=scaling_min_sep
         )
 
+        # results["chimical_shift"] = compute_chemical_shift(self.md_traj) # Need the conda env of LEGOLAS to be use -> So computed in another script afterward
         results["local_chirality"] = compute_local_chirality(self.md_traj)
         results.update(compute_secondary_structure_propensities(self.md_traj))
 

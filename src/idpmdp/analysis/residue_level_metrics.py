@@ -1,6 +1,105 @@
 import mdtraj as md
 import numpy as np
 from scipy.spatial import cKDTree
+import MDAnalysis as mda
+import os
+from contextlib import contextmanager
+import tempfile
+import pandas as pd
+import mdtraj as md
+import subprocess
+
+
+def compute_chemical_shift(u, pdb_path, batch_size):
+    """
+    Full pipeline:
+    1. Writes Universe to temp NC.
+    2. Runs Legolas analysis (output goes to LEGOLAS_PATH directory).
+    3. Parses CSV output from the LEGOLAS_PATH directory.
+    4. Cleans up the generated CSV and temp files.
+    """
+    # Constants
+    LEGOLAS_PATH = "/srv/storage/capsid@srv-data2.nancy.grid5000.fr/nbuton/LEGOLAS/legolas/test/legolas.py"
+
+    print(f"Number of residues: {len(u.residues)}")
+    output_dict = {}
+
+    idp_dir_path = os.path.dirname(pdb_path)
+
+    # 1. Prepare Paths
+    nc_temp_path = os.path.join(idp_dir_path, "traj_AA.nc")
+    # Legolas creates a CSV named after the input file, in its own directory
+    generated_csv_name = "traj_AA_cs.csv"
+    generated_csv_path = os.path.join(idp_dir_path, generated_csv_name)
+
+    # 2. Write Universe to temp NC file
+    print(f"--- Writing trajectory to {nc_temp_path} ---")
+    with mda.Writer(nc_temp_path, u.atoms.n_atoms) as W:
+        for ts in u.trajectory:
+            W.write(u.atoms)
+
+    # 3. Prepare and run the Legolas command
+    command = [
+        "python3",
+        LEGOLAS_PATH,
+        os.path.abspath(nc_temp_path),
+        "-b",
+        str(batch_size),
+        "-d",
+        idp_dir_path,
+        "-t",
+        os.path.abspath(pdb_path),
+        "-o",
+        "csv",
+    ]
+
+    try:
+        print(f"--- Executing Legolas at {LEGOLAS_PATH} ---")
+        subprocess.run(command, check=True, capture_output=True, text=True)
+
+        # 4. Read the file from the script directory
+        if os.path.exists(generated_csv_path):
+            print(f"--- Reading results from {generated_csv_path} ---")
+            df = pd.read_csv(generated_csv_path)
+        else:
+            raise FileNotFoundError(f"Legolas failed to produce: {generated_csv_path}")
+
+        # 5. Parse the DataFrame
+        print("--- Parsing results ---")
+        target_atoms = ["C", "CA", "CB", "N", "H"]
+        n_res = len(u.residues)
+        res_id_to_idx = {res.resid: i for i, res in enumerate(u.residues)}
+
+        averaged_array = np.full((n_res, len(target_atoms)), np.nan)
+
+        for col_idx, atom in enumerate(target_atoms):
+            if atom in df.columns:
+                for _, row in df.iterrows():
+                    res_id = int(row["resID"])
+                    if res_id in res_id_to_idx:
+                        r_idx = res_id_to_idx[res_id]
+                        val = row[atom]
+                        # Assuming 0.0 is a null value in Legolas output
+                        if val != 0:
+                            averaged_array[r_idx, col_idx] = val
+
+        output_dict = {
+            f"chemical_shift_{atom.lower()}": averaged_array[:, i]
+            for i, atom in enumerate(target_atoms)
+        }
+
+    except subprocess.CalledProcessError as e:
+        print(f"Error during Legolas execution: {e.stderr}")
+        raise
+    finally:
+        # 6. Explicit Cleanup of the CSV in the Legolas folder
+        if os.path.exists(generated_csv_path):
+            os.remove(generated_csv_path)
+            os.remove(nc_temp_path)
+            print(f"--- Cleaned up {generated_csv_name} from Legolas directory ---")
+
+    print("--- Pipeline complete. ---")
+    return output_dict
 
 
 def has_overlapping_atoms(traj, threshold=0.001):

@@ -25,3 +25,21 @@ def save_all_properties(results, output_folder: Path):
                 hf.create_dataset(key, data=value)
 
     print(f"Successfully saved data to {filename}")
+
+
+def load_all_properties(filename: Path):
+    """
+    Loads properties from an HDF5 file and returns them as a dictionary.
+    """
+    results = {}
+
+    if not filename.exists():
+        raise FileNotFoundError(f"No file found at {filename}")
+
+    with h5py.File(filename, "r") as hf:
+        for key in hf.keys():
+            # .[()] or .flatten() is the standard way to load
+            # the dataset content into a numpy array
+            results[key] = hf[key][()]
+
+    return results

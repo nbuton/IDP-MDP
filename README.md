@@ -30,7 +30,7 @@ Compute the physical and structural properties from the conformation set of each
 
 ```bash
 python3 pipeline/compute_all_properties.py
-
+python3 pipeline/add_chemical_shift.py
 ```
 
 ### 4. Dataset Generation
