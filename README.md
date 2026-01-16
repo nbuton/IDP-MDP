@@ -1,5 +1,5 @@
 # IDP-MDP (IDP Molecular Dynamics Properties)
-Tool to create the DynaFold Benchmark
+Tool to create the HumanDynaFold Benchmark
 
 **Objective:** Evaluate model that predict conformational set properties directly from sequence
 

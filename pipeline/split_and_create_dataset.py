@@ -3,6 +3,7 @@ from idpmdp.dataset_creator.split_and_create_datasets import (
     get_asymmetric_splits_from_csv,
     unify_selected_idrome_to_h5,
 )
+import os
 
 if __name__ == "__main__":
     root_directory = "data/IDRome/IDRome_v4/"
@@ -26,7 +27,7 @@ if __name__ == "__main__":
     print(f"Val: {len(dataset_splits['validation'])}")
     print(f"Test: {len(dataset_splits['test'])}")
 
-    path_final_dataset = "data/DynaFoldBench/"
+    path_final_dataset = "data/HumanDynaFoldBench/"
     os.makedirs(path_final_dataset, exist_ok=True)
     for split in ["train", "validation", "test"]:
         unify_selected_idrome_to_h5(

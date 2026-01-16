@@ -1,4 +1,4 @@
-from idpmdp.protein_analyzer import ProteinAnalyzer
+from idpmdp.analysis.orchestrator import ProteinAnalyzer
 from idpmdp.backmapping import IDRomeBackmapper
 import mdtraj as md
 import numpy as np
