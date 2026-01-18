@@ -13,8 +13,12 @@ def compute_end_to_end_distance(
     Calculates the distance between the CA atoms of the
     first and last residues across the trajectory.
     """
-    start_ca = md_analysis_u.select_atoms(f"resid {residues[0].resid} and name CA")
-    end_ca = md_analysis_u.select_atoms(f"resid {residues[-1].resid} and name CA")
+    # Inside compute_end_to_end_distance
+    all_ca = md_analysis_u.select_atoms("name CA")
+
+    start_ca = all_ca[0:1]
+    end_ca = all_ca[-1:]
+
     # Ensure single atom selections
     assert (
         len(start_ca) == 1

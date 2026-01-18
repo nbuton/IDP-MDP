@@ -12,6 +12,10 @@ import io
 import os
 import logging
 from tqdm import tqdm
+import pandas as pd
+import requests
+import os
+import logging
 
 
 class PEDAPIError(RuntimeError):
@@ -136,6 +140,72 @@ class PEDDownloader:
 
         return results_map
 
+    def get_and_save_full_metadata(
+        self, ped_id: str, ensemble_id: str, output_dir: str
+    ) -> None:
+        """
+        Fetches the full entry JSON and flattens specific metadata into a CSV.
+        """
+        entry_url = f"https://deposition.proteinensemble.org/api/v1/entries/{ped_id}/"
+
+        try:
+            response = requests.get(entry_url, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            desc = data.get("description", {})
+
+            # 1. Extract Authors (Join names into a string)
+            authors = ", ".join([a.get("name", "") for a in desc.get("authors", [])])
+
+            # 2. Extract Tags from Ontology Terms
+            # We categorize them by their namespace (Measurement vs MD vs Ensemble Gen)
+            ontology = desc.get("ontology_terms", [])
+            exp_tags = [
+                o["name"] for o in ontology if o["namespace"] == "Measurement method"
+            ]
+            md_tags = [
+                o["name"] for o in ontology if o["namespace"] == "Molecular dynamics"
+            ]
+            gen_tags = [
+                o["name"]
+                for o in ontology
+                if o["namespace"] == "Ensemble generation method"
+            ]
+
+            # 3. Extract Construct Info (Uniprot and Sequence)
+            # Taking the first chain/fragment as a representative
+            chains = data.get("construct_chains", [])
+            uniprot_id = "N/A"
+            if chains and chains[0].get("fragments"):
+                uniprot_id = chains[0]["fragments"][0].get("uniprot_acc", "N/A")
+
+            # 4. Create a flattened dictionary for the CSV
+            metadata_row = {
+                "entry_id": ped_id,
+                "ensemble_id": ensemble_id,
+                "title": desc.get("title"),
+                "authors": authors,
+                "pubmed_id": desc.get("publication_identifier"),
+                "uniprot_id": uniprot_id,
+                # Technical Tags
+                "exp_methods": "|".join(exp_tags),
+                "md_methods": "|".join(md_tags),
+                "gen_methods": "|".join(gen_tags),
+                # Detailed Text
+                "experimental_procedure": desc.get("experimental_procedure"),
+                "structural_calculation": desc.get("structural_ensembles_calculation"),
+                "md_calculation": desc.get("md_calculation"),
+                "creation_date": data.get("creation_date"),
+            }
+
+            # Save to CSV
+            meta_file = os.path.join(output_dir, f"{ensemble_id}_full_metadata.csv")
+            pd.DataFrame([metadata_row]).to_csv(meta_file, index=False)
+            logging.info(f"Full metadata successfully saved for {ped_id}")
+
+        except Exception as e:
+            logging.error(f"Metadata error for {ped_id}: {e}")
+
     def download_ped_assets(
         self, ped_id: str, ensemble_id: str, output_dir: str
     ) -> None:
@@ -145,7 +215,7 @@ class PEDDownloader:
         base_url = f"https://deposition.proteinensemble.org/api/v1/entries/{ped_id}/ensembles/{ensemble_id}/"
 
         # Define the specific assets you need
-        assets = ["ensemble-pdb", "weights"]
+        assets = []  # ["ensemble-pdb", "weights"]
 
         os.makedirs(output_dir, exist_ok=True)
 
@@ -172,6 +242,8 @@ class PEDDownloader:
 
             except requests.exceptions.RequestException as e:
                 print(f"Error downloading {asset}: {e}")
+
+        self.get_and_save_full_metadata(ped_id, ensemble_id, output_dir)
 
     def download_all_experimental(
         self,

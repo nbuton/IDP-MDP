@@ -84,20 +84,3 @@ if __name__ == "__main__":
     print("distance_fluctuations:", results["distance_fluctuations"][:5, :5])
     print("contact_map:", results["contact_map"][:5, :5])
     print(f"\nTotal analysis time: {time.time() - start_time:.2f} seconds")
-    exit(1)
-
-    # Test PED loading
-    print("Analysing ensemble from PED")
-    pdb_path = [
-        "data/PED/PED00001/e001_ensemble-pdb.pdb",
-        "data/PED/PED00001/e002_ensemble-pdb.pdb",
-        "data/PED/PED00001/e003_ensemble-pdb.pdb",
-    ]
-    analyzer = ProteinAnalyzer(pdb_path)
-    results = analyzer.compute_all(
-        sasa_n_sphere=250,
-        contact_cutoff=8.0,
-        scaling_min_sep=5,
-    )
-    print_results(results)
-    print("There are {count_total_floats(results)} elements in the results dictionary.")

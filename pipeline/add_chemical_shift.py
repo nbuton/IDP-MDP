@@ -1,3 +1,4 @@
+from pathlib import Path
 from joblib import Parallel, delayed
 from idpmdp.utils import get_pdb_directories
 from idpmdp.analysis.residue_level_metrics import compute_chemical_shift
@@ -9,7 +10,7 @@ import MDAnalysis
 import os
 
 
-def update_chemical_shifts(directory_path):
+def update_chemical_shifts(directory_path, from_PED=False):
     output_file = directory_path / "properties.h5"
     lock_file = directory_path / "processing.lock"
 
@@ -36,10 +37,14 @@ def update_chemical_shifts(directory_path):
 
     try:
         # 3. Initialize analyzer and compute ONLY the missing property
-        pdb_path = directory_path / "top_AA.pdb"
-        xtc_path = directory_path / "traj_AA.xtc"
+        if from_PED:
+            pdb_path = directory_path.parent / "top_AA.pdb"
+            md_analysis_u = MDAnalysis.Universe(pdb_path)
+        else:
+            pdb_path = directory_path / "top_AA.pdb"
+            xtc_path = directory_path / "traj_AA.xtc"
 
-        md_analysis_u = MDAnalysis.Universe(pdb_path, xtc_path)
+            md_analysis_u = MDAnalysis.Universe(pdb_path, xtc_path)
 
         # Compute chemical shifts
         cs_dict_results = compute_chemical_shift(md_analysis_u, pdb_path, batch_size=96)
@@ -56,12 +61,20 @@ def update_chemical_shifts(directory_path):
 
 
 if __name__ == "__main__":
+    # For IDRome
     all_idp_dir = get_pdb_directories(
         "/srv/storage/capsid@srv-data2.nancy.grid5000.fr/nbuton/IDP-MDP/data/IDRome/IDRome_v4/"
     )
     n_jobs = 32  # 64
-
     print(f"Starting chemical shift update for {len(all_idp_dir)} directories...")
+    results = Parallel(n_jobs=n_jobs, prefer="processes", verbose=10)(
+        delayed(update_chemical_shifts)(directory_path)
+        for directory_path in all_idp_dir
+    )
+
+    # For PED
+    root = Path("data/PED/")
+    all_idp_dir = {p.parent for p in root.rglob("*.h5") if p.is_file()}
     results = Parallel(n_jobs=n_jobs, prefer="processes", verbose=10)(
         delayed(update_chemical_shifts)(directory_path)
         for directory_path in all_idp_dir
